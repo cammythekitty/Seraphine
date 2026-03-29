@@ -22,7 +22,7 @@ intents = discord.Intents.default()
 intents.message_content = True  # Required for reading message content
 intents.members = True
 
-bot = commands.Bot(command_prefix=None, intents=intents)
+bot = commands.Bot(command_prefix="", intents=intents)
 
 
 # Events
