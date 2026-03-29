@@ -153,7 +153,7 @@ class CommandsCog(commands.Cog):
         
         try:
             # Get all bans from current guild
-            current_bans = await current_guild.bans()
+            current_bans = [ban async for ban in current_guild.bans()]
             current_banned_ids = {ban.user.id for ban in current_bans}
             
             # Ban all users from current guild in all connected guilds
@@ -169,7 +169,7 @@ class CommandsCog(commands.Cog):
                 try:
                     connected_guild = self.bot.get_guild(int(connected_id))
                     if connected_guild:
-                        connected_bans = await connected_guild.bans()
+                        connected_bans = [ban async for ban in connected_guild.bans()]
                         connected_banned_ids = {ban.user.id for ban in connected_bans}
                         
                         # Ban users from connected guild that aren't already banned in current guild
