@@ -38,6 +38,14 @@ async def on_ready():
         logger.error(f'Failed to sync commands: {e}')
 
 
+@bot.event
+async def on_message(message):
+    """Override on_message to prevent prefix command processing (slash commands only)."""
+    if message.author == bot.user:
+        return
+    # Don't process prefix commands - only use slash commands
+
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     """Handle slash command errors."""

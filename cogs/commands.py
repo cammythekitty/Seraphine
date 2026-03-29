@@ -33,11 +33,30 @@ class CommandsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
-    @app_commands.command(name='letter-sucks', description='pings letter and says he sucks')
+    @app_commands.command(name='leter-sucks', description='pings letter and says he sucks')
     async def notify(self, interaction: discord.Interaction):
         """Notifies a hardcoded user."""
-        LETTER_ID = 1289992140323033152  # Replace with actual ID
-        await interaction.response.send_message(f'<@{LETTER_ID}> - You Suck! :D')
+        LETER_ID = 1289992140323033152  # Replace with actual ID
+        await interaction.response.send_message(f'<@{LETER_ID}> - You Suck! :D')
+
+    @app_commands.command(name='sync', description='Force slash commands to update (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync(self, interaction: discord.Interaction):
+        """Force sync slash commands with Discord."""
+        await interaction.response.defer()
+        try:
+            synced = await self.bot.tree.sync()
+            await interaction.followup.send(f'✅ Synced {len(synced)} command(s)!', ephemeral=True)
+            logger.info(f'Commands synced by {interaction.user}: {len(synced)} commands')
+        except Exception as e:
+            logger.error(f'Sync failed: {e}')
+            await interaction.followup.send(f'❌ Sync failed: {e}', ephemeral=True)
+
+    @sync.error
+    async def sync_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Handle sync command errors."""
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message('You must be an admin to use this command!', ephemeral=True)
 
     @app_commands.command(name='ping', description='Responds with pong')
     async def ping(self, interaction: discord.Interaction):
