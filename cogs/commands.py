@@ -25,7 +25,8 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='echo', description='Echoes the user input In Channels Hides Who Wrote It')
     async def echo(self, interaction: discord.Interaction, message: str):
         """Echoes the user input."""
-        await interaction.response.send_message(message, ephemeral=True)
+        await interaction.response.defer()
+        await interaction.channel.send(message)
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
