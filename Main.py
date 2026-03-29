@@ -1,6 +1,7 @@
 # A simple discord bot that me and my friends use for custom commands and funnies
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 from dotenv import load_dotenv
 import logging
@@ -15,14 +16,13 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 TOKEN = os.getenv('DISCORD_TOKEN')
-COMMAND_PREFIX = os.getenv('COMMAND_PREFIX', '!')
 
-# Create bot instance
+# Create bot instance (slash commands only)
 intents = discord.Intents.default()
 intents.message_content = True  # Required for reading message content
 intents.members = True
 
-bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
+bot = commands.Bot(command_prefix=None, intents=intents)
 
 
 # Events
@@ -38,18 +38,14 @@ async def on_ready():
         logger.error(f'Failed to sync commands: {e}')
 
 
-@bot.event
-async def on_command_error(ctx, error):
-    """Handle command errors."""
-    if isinstance(error, commands.CommandNotFound):
-        return
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f'Missing required argument: {error.param}')
-    elif isinstance(error, commands.MissingPermissions):
-        await ctx.send('You do not have permission to use this command.')
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handle slash command errors."""
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message('You do not have permission to use this command.', ephemeral=True)
     else:
         logger.error(f'Command error: {error}')
-        await ctx.send(f'An error occurred: {error}')
+        await interaction.response.send_message(f'An error occurred: {error}', ephemeral=True)
 
 
 async def load_cogs():

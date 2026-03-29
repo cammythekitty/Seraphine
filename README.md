@@ -18,7 +18,6 @@ cp .env.example .env
 Edit `.env` and add your Discord bot token:
 ```
 DISCORD_TOKEN=your_actual_bot_token_here
-COMMAND_PREFIX=!
 ```
 
 ### 3. Run the Bot
@@ -42,25 +41,29 @@ Discord-Bot/
 
 ## Creating Commands
 
-Commands are organized into **cogs**. Each cog is a separate file in the `cogs/` directory.
+Commands are organized into **cogs** and use **slash commands** (`/command`). Each cog is a separate file in the `cogs/` directory.
 
 ### Example Cog Structure
 
-See `cogs/example.py` for a template. To create a new command:
+See `cogs/example.py` for a template. To create a new slash command:
 
 1. Create a new file in `cogs/` (e.g., `cogs/mycommands.py`)
 2. Define your commands in a class that inherits from `commands.Cog`
-3. Use the `@commands.command()` decorator
+3. Use the `@app_commands.command()` decorator
 4. The cog will be automatically loaded when the bot starts
+5. Commands sync with Discord on startup, so they'll appear with `/` in the chat
 
 ```python
+from discord import app_commands
+from discord.ext import commands
+
 class MyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
-    @commands.command(name='mycommand')
-    async def my_command(self, ctx):
-        await ctx.send('Hello!')
+    @app_commands.command(name='mycommand', description='Does something cool')
+    async def my_command(self, interaction: discord.Interaction):
+        await interaction.response.send_message('Hello!')
 
 async def setup(bot):
     await bot.add_cog(MyCog(bot))
@@ -68,9 +71,9 @@ async def setup(bot):
 
 ## Features
 
+- ⚡ **Slash commands only** - Type `/` to see all available commands
 - 🔄 Automatic cog loading from the `cogs/` directory
-- 📋 Command error handling
-- 🔗 Slash command support (slash commands synced on startup)
+- 📋 Slash command error handling
 - 🪵 Built-in logging
 - ⚙️ Environment variable configuration
 
@@ -86,5 +89,14 @@ Your bot needs the following intents enabled in the [Discord Developer Portal](h
 2. Create a new application
 3. Go to "Bot" tab and click "Add Bot"
 4. Copy the token and paste it into your `.env` file
-5. Enable the required intents
+5. Enable the required intents (Message Content Intent and Server Members Intent)
 6. Generate an OAuth2 URL with permissions and invite your bot to your server
+
+## Using Slash Commands
+
+Once your bot is running, you can use slash commands in Discord:
+
+- Type `/` in any channel where the bot is present
+- You'll see a list of available commands with descriptions
+- Select a command and press Enter
+- Your friends will be able to see the commands you're using!
