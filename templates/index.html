@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Bot - Add to Your Server</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            max-width: 600px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .features {
+            list-style: none;
+            margin: 30px 0;
+            text-align: left;
+        }
+        
+        .features li {
+            padding: 10px;
+            color: #555;
+            font-size: 1.1em;
+        }
+        
+        .features li:before {
+            content: "✨ ";
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        a.btn {
+            padding: 12px 30px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 1.05em;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-weight: bold;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 2px solid #ddd;
+        }
+        
+        .btn-secondary:hover {
+            background: #e8e8e8;
+            border-color: #bbb;
+        }
+        
+        footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #888;
+            font-size: 0.9em;
+        }
+        
+        footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Discord Bot</h1>
+        <p class="subtitle">Add our bot to your Discord server!</p>
+        
+        <ul class="features">
+            <li>Slash commands for easy use</li>
+            <li>Admin tools and moderation</li>
+            <li>Fun and custom commands</li>
+            <li>Per-server configuration</li>
+        </ul>
+        
+        <div class="button-group">
+            <a href="/invite" class="btn btn-primary">Add to Server</a>
+            <a href="/terms" class="btn btn-secondary">Terms & Conditions</a>
+        </div>
+        
+        <footer>
+            <p>For support or questions, contact the server admins.</p>
+            <p style="margin-top: 10px;">
+                <a href="/privacy">Privacy Policy</a> | 
+                <a href="/terms">Terms of Service</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
