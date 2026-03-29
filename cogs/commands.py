@@ -33,12 +33,88 @@ class CommandsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
+    @app_commands.command(name='ban-sync-add', description='Set up ban synchronization with another guild (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ban_sync_add(self, interaction: discord.Interaction, sync_guild_id: str):
+        """Set up ban synchronization with another guild."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        if 'sync_guilds' not in config[guild_id]:
+            config[guild_id]['sync_guilds'] = []
+        config[guild_id]['sync_guilds'].append(sync_guild_id)
+        save_config(config)
+        await interaction.response.send_message(f'✅ Ban synchronization set up with guild {sync_guild_id}.', ephemeral=True)
+
+    @app_commands.command(name='ban-sync-remove', description='Remove a guild from ban synchronization (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ban_sync_remove(self, interaction: discord.Interaction, sync_guild_id: str):
+        """Remove a guild from ban synchronization."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id in config and 'sync_guilds' in config[guild_id] and sync_guild_id in config[guild_id]['sync_guilds']:
+            config[guild_id]['sync_guilds'].remove(sync_guild_id)
+            save_config(config)
+            await interaction.response.send_message(f'✅ Ban synchronization removed for guild {sync_guild_id}.', ephemeral=True)
+        else:
+            await interaction.response.send_message(f'Guild {sync_guild_id} is not currently set up for ban synchronization.', ephemeral=True)
+
+    
+
+    @app_commands.command(name='sync-bans', description='syncs the bans across set guilds (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync_bans(self, interaction: discord.Interaction):
+        """Syncs bans across guilds."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config or 'sync_guilds' not in config[guild_id]:
+            await interaction.response.send_message('No sync guilds configured for this server.', ephemeral=True)
+            return
+        
+        sync_guild_ids = config[guild_id]['sync_guilds']
+        current_guild = interaction.guild
+        
+        for sync_id in sync_guild_ids:
+            try:
+                sync_guild = self.bot.get_guild(int(sync_id))
+                if sync_guild:
+                    # Sync bans from current guild to sync guild
+                    current_bans = await current_guild.bans()
+                    sync_bans = await sync_guild.bans()
+                    
+                    # Create sets of banned user IDs for comparison
+                    current_banned_ids = {ban.user.id for ban in current_bans}
+                    sync_banned_ids = {ban.user.id for ban in sync_bans}
+                    
+                    # Ban users that are banned in current guild but not in sync guild
+                    for user_id in current_banned_ids - sync_banned_ids:
+                        user = await self.bot.fetch_user(user_id)
+                        await sync_guild.ban(user, reason='Ban synced from another server')
+                    
+                    # Unban users that are banned in sync guild but not in current guild
+                    for user_id in sync_banned_ids - current_banned_ids:
+                        user = await self.bot.fetch_user(user_id)
+                        await sync_guild.unban(user, reason='Unban synced from another server')
+                    
+                    logger.info(f'Synced bans between {current_guild.name} and {sync_guild.name}')
+                else:
+                    logger.warning(f'Guild with ID {sync_id} not found for syncing bans.')
+            except Exception as e:
+                logger.error(f'Error syncing bans with guild ID {sync_id}: {e}')
+        
+        await interaction.response.send_message('✅ Ban synchronization complete!', ephemeral=True)
+
     @app_commands.command(name='leter-sucks', description='pings letter and says he sucks')
     async def notify(self, interaction: discord.Interaction):
         """Notifies a hardcoded user."""
         LETER_ID = 1289992140323033152  # Replace with actual ID
         await interaction.response.send_message(f'<@{LETER_ID}> - You Suck! :D')
-
+        
     @app_commands.command(name='sync', description='Force slash commands to update (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def sync(self, interaction: discord.Interaction):
