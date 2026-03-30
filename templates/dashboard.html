@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Discord Bot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .welcome {
+            color: #667eea;
+            font-size: 1.1em;
+            margin-bottom: 30px;
+        }
+        
+        .info-box {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        
+        .info-box strong {
+            color: #333;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        a.btn, button.btn {
+            padding: 12px 30px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 1.05em;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+            font-weight: bold;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+        
+        .btn-danger {
+            background: #ff6b6b;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #ee5a52;
+        }
+        
+        .features {
+            margin: 30px 0;
+            list-style: none;
+        }
+        
+        .features li {
+            padding: 10px 0;
+            color: #555;
+            font-size: 1.05em;
+        }
+        
+        .features li:before {
+            content: "✅ ";
+            color: #667eea;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎉 Welcome to your Dashboard!</h1>
+        <p class="welcome">You're logged in as <strong>{{ username }}</strong></p>
+        
+        <div class="info-box">
+            <strong>User ID:</strong> {{ user_id }}
+        </div>
+        
+        <h2 style="margin-top: 30px;">What's Next?</h2>
+        <ul class="features">
+            <li>Configure the bot for your server</li>
+            <li>Check the Terms & Conditions</li>
+            <li>Read more about the bot features</li>
+            <li>Manage your settings</li>
+        </ul>
+        
+        <div class="button-group">
+            <a href="/" class="btn btn-primary">Back to Home</a>
+            <a href="/logout" class="btn btn-danger">Logout</a>
+        </div>
+    </div>
+</body>
+</html>
