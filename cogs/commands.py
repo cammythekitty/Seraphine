@@ -6,6 +6,9 @@ from discord import app_commands
 import logging
 import json
 from pathlib import Path
+import random
+from datetime import datetime, timedelta
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +308,206 @@ class CommandsCog(commands.Cog):
     async def on_member_join(self, member):
         """Called when a member joins the server."""
         logger.info(f'{member.name} joined the server')
+    
+    @app_commands.command(name='roast', description='Generate a random funny roast for someone')
+    async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
+        """Generate a random funny roast for the specified user or yourself."""
+        roasts = [
+            "I would roast you, but I don't want to burn down the whole internet.",
+            "Your personality is so magnetic... it repels people.",
+            "You bring everyone a lot of joy... when you leave the room.",
+            "If you were a vegetable, you'd be a radish... because nobody likes you.",
+            "You're like a cloud. When you disappear, it's a beautiful day.",
+            "I'm not saying you're dumb, but you'd have to study to be average.",
+            "You're the reason they put instructions on shampoo bottles.",
+            "If you were a homework assignment, I'd turn myself in to the teacher.",
+            "You're not stupid; you just have bad luck when thinking.",
+            "You're the human equivalent of a participation trophy.",
+            "Your IQ is lower than your shoe size.",
+            "You're like a human version of a 404 error - pointless and hard to understand.",
+            "If you were a pizza, I'd order Thai food instead.",
+            "You're what happens when a joke goes too far.",
+            "I'd insult you more, but I'm afraid you wouldn't understand.",
+            "You're so boring, even your jokes put you to sleep.",
+            "Your profile picture is the most interesting thing about you.",
+            "The only thing you're good at is being bad at things.",
+            "You're a walking motivational poster... not to do anything you do.",
+            "If brains were dynamite, you couldn't blow your nose."
+        ]
+        
+        target_user = user or interaction.user
+    
+    def _is_word_filter_expired(self, config: dict, guild_id: str) -> bool:
+        """Check if the word filter expiration date has passed."""
+        if guild_id not in config or 'word_filter_expiry' not in config[guild_id]:
+            return True
+        
+        try:
+            expiry_date = datetime.fromisoformat(config[guild_id]['word_filter_expiry'])
+            return datetime.now() > expiry_date
+        except (ValueError, TypeError):
+            return True
+    
+    def _reset_word_filter_if_expired(self, config: dict, guild_id: str):
+        """Reset banned words if the daily expiration has passed."""
+        if self._is_word_filter_expired(config, guild_id):
+            if guild_id in config:
+                config[guild_id]['banned_words'] = []
+                config[guild_id]['word_filter_expiry'] = (datetime.now() + timedelta(days=1)).isoformat()
+                save_config(config)
+    
+    @app_commands.command(name='word-filter-toggle', description='Toggle word filtering on/off (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def word_filter_toggle(self, interaction: discord.Interaction):
+        """Toggle the word filter feature on or off for the guild."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        # Toggle the filter
+        current_state = config[guild_id].get('word_filter_enabled', False)
+        config[guild_id]['word_filter_enabled'] = not current_state
+        
+        # Initialize word list and expiry if needed
+        if 'banned_words' not in config[guild_id]:
+            config[guild_id]['banned_words'] = []
+        if 'word_filter_expiry' not in config[guild_id]:
+            config[guild_id]['word_filter_expiry'] = (datetime.now() + timedelta(days=1)).isoformat()
+        
+        save_config(config)
+        new_state = "✅ **enabled**" if config[guild_id]['word_filter_enabled'] else "❌ **disabled**"
+        await interaction.response.send_message(f'Word filter is now {new_state}', ephemeral=True)
+    
+    @app_commands.command(name='ban-word', description='Ban a word for today (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ban_word(self, interaction: discord.Interaction, word: str):
+        """Add a word to the daily ban list."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        # Check if filter is enabled
+        if not config[guild_id].get('word_filter_enabled', False):
+            await interaction.response.send_message('❌ Word filter is not enabled. Use `/word-filter-toggle` first.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        # Initialize if needed
+        if 'banned_words' not in config[guild_id]:
+            config[guild_id]['banned_words'] = []
+        
+        word_lower = word.lower()
+        if word_lower in config[guild_id]['banned_words']:
+            await interaction.response.send_message(f'⚠️ The word "{word}" is already banned!', ephemeral=True)
+            return
+        
+        config[guild_id]['banned_words'].append(word_lower)
+        save_config(config)
+        await interaction.response.send_message(f'🚫 Banned the word "{word}" for today!', ephemeral=True)
+    
+    @app_commands.command(name='unban-word', description='Unban a word (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def unban_word(self, interaction: discord.Interaction, word: str):
+        """Remove a word from the daily ban list."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config or 'banned_words' not in config[guild_id]:
+            await interaction.response.send_message('❌ No banned words found.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        word_lower = word.lower()
+        if word_lower not in config[guild_id]['banned_words']:
+            await interaction.response.send_message(f'❌ The word "{word}" is not currently banned.', ephemeral=True)
+            return
+        
+        config[guild_id]['banned_words'].remove(word_lower)
+        save_config(config)
+        await interaction.response.send_message(f'✅ Unbanned the word "{word}"!', ephemeral=True)
+    
+    @app_commands.command(name='banned-words', description='List all currently banned words (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def list_banned_words(self, interaction: discord.Interaction):
+        """Show all currently banned words for today."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config or 'banned_words' not in config[guild_id]:
+            await interaction.response.send_message('❌ No banned words found.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        banned = config[guild_id].get('banned_words', [])
+        filter_enabled = config[guild_id].get('word_filter_enabled', False)
+        
+        if not banned:
+            status = "✅ enabled" if filter_enabled else "❌ disabled"
+            await interaction.response.send_message(f'No banned words for today. (Filter status: {status})', ephemeral=True)
+            return
+        
+        word_list = ', '.join([f'`{word}`' for word in sorted(banned)])
+        status = "✅ enabled" if filter_enabled else "❌ disabled"
+        await interaction.response.send_message(f'**Banned words for today** (Filter: {status}):\n{word_list}', ephemeral=True)
+    
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Listen to messages and filter banned words."""
+        # Ignore bot messages
+        if message.author == self.bot.user:
+            return
+        
+        # Ignore DMs
+        if not message.guild:
+            return
+        
+        # Ignore if bot is trying to process commands
+        if message.content.startswith('/'):
+            return
+        
+        config = load_config()
+        guild_id = str(message.guild.id)
+        
+        # Check if word filter is enabled for this guild
+        if guild_id not in config or not config[guild_id].get('word_filter_enabled', False):
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        banned_words = config[guild_id].get('banned_words', [])
+        if not banned_words:
+            return
+        
+        message_lower = message.content.lower()
+        
+        # Check if any banned word appears in the message (as whole word, case-insensitive)
+        banned_found = []
+        for banned_word in banned_words:
+            # Use word boundary regex to match whole words only
+            if re.search(rf'\b{re.escape(banned_word)}\b', message_lower):
+                banned_found.append(banned_word)
+        
+        if banned_found:
+            try:
+                await message.delete()
+                user_mention = message.author.mention
+                words_str = ', '.join([f'`{word}`' for word in banned_found])
+                await message.channel.send(f"{user_mention} - Your message was deleted for containing banned word(s): {words_str} 🚫", delete_after=5)
+            except discord.Forbidden:
+                logger.warning(f'Could not delete message from {message.author}: insufficient permissions')
+        roast = random.choice(roasts)
+        await interaction.response.send_message(f"🔥 **Roast for {target_user.mention}:** {roast}")
 
 
 async def setup(bot):
