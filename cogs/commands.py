@@ -10,6 +10,9 @@ from pathlib import Path
 import random
 from datetime import datetime, timedelta
 import re
+import subprocess
+import asyncio
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -308,34 +311,6 @@ class CommandsCog(commands.Cog):
         """Called when a member joins the server."""
         logger.info(f'{member.name} joined the server')
     
-    @app_commands.command(name='roast', description='Generate a random funny roast for someone')
-    async def roast(self, interaction: discord.Interaction, user: discord.Member = None):
-        """Generate a random funny roast for the specified user or yourself."""
-        roasts = [
-            "I would roast you, but I don't want to burn down the whole internet.",
-            "Your personality is so magnetic... it repels people.",
-            "You bring everyone a lot of joy... when you leave the room.",
-            "If you were a vegetable, you'd be a radish... because nobody likes you.",
-            "You're like a cloud. When you disappear, it's a beautiful day.",
-            "I'm not saying you're dumb, but you'd have to study to be average.",
-            "You're the reason they put instructions on shampoo bottles.",
-            "If you were a homework assignment, I'd turn myself in to the teacher.",
-            "You're not stupid; you just have bad luck when thinking.",
-            "You're the human equivalent of a participation trophy.",
-            "Your IQ is lower than your shoe size.",
-            "You're like a human version of a 404 error - pointless and hard to understand.",
-            "If you were a pizza, I'd order Thai food instead.",
-            "You're what happens when a joke goes too far.",
-            "I'd insult you more, but I'm afraid you wouldn't understand.",
-            "You're so boring, even your jokes put you to sleep.",
-            "Your profile picture is the most interesting thing about you.",
-            "The only thing you're good at is being bad at things.",
-            "You're a walking motivational poster... not to do anything you do.",
-            "If brains were dynamite, you couldn't blow your nose."
-        ]
-        
-        target_user = user or interaction.user
-    
     def _is_word_filter_expired(self, config: dict, guild_id: str) -> bool:
         """Check if the word filter expiration date has passed."""
         if guild_id not in config or 'word_filter_expiry' not in config[guild_id]:
@@ -376,7 +351,7 @@ class CommandsCog(commands.Cog):
             config[guild_id]['word_filter_expiry'] = (datetime.now() + timedelta(days=1)).isoformat()
         
         save_config(config)
-        new_state = "✅ **enabled**" if config[guild_id]['word_filter_enabled'] else "❌ **disabled**"
+        new_state = "**enabled**" if config[guild_id]['word_filter_enabled'] else "❌ **disabled**"
         await interaction.response.send_message(f'Word filter is now {new_state}', ephemeral=True)
     
     @app_commands.command(name='ban-word', description='Ban a word for today (Admin Only)')
@@ -506,7 +481,7 @@ class CommandsCog(commands.Cog):
             except discord.Forbidden:
                 logger.warning(f'Could not delete message from {message.author}: insufficient permissions')
         roast = random.choice(roasts)
-        await interaction.response.send_message(f"🔥 **Roast for {target_user.mention}:** {roast}")
+        await interaction.response.send_message(f"**Roast for {target_user.mention}:** {roast}")
 
     @app_commands.command(name='bot-logs', description='Dump recent console logs to your DMs (Owner Only)')
     async def logs(self, interaction: discord.Interaction, lines: int = 50):
@@ -581,6 +556,57 @@ class CommandsCog(commands.Cog):
             await interaction.followup.send(f'Error retrieving logs: {e}', ephemeral=True)
 
 
+    @app_commands.command(name='pi-stats', description='Show CPU temp, RAM usage, and uptime of the Pi (Owner Only)')
+    async def pi_stats(self, interaction: discord.Interaction):
+        """Returns Raspberry Pi system stats. Owner only."""
+        owner_id = os.getenv('BOT_OWNER_ID')
+
+        if not owner_id:
+            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
+            return
+
+        if str(interaction.user.id) != owner_id:
+            logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access pi-stats without permission')
+            await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # CPU temperature
+            try:
+                with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                    cpu_temp = int(f.read().strip()) / 1000.0
+                temp_str = f'{cpu_temp:.1f}°C'
+            except FileNotFoundError:
+                temp_str = 'N/A (not on Pi?)'
+
+            # RAM usage
+            mem = psutil.virtual_memory()
+            ram_used = mem.used / (1024 ** 2)
+            ram_total = mem.total / (1024 ** 2)
+            ram_percent = mem.percent
+            ram_str = f'{ram_used:.0f} MB / {ram_total:.0f} MB ({ram_percent}%)'
+
+            # Uptime
+            boot_time = psutil.boot_time()
+            uptime_seconds = int(datetime.now().timestamp() - boot_time)
+            days, remainder = divmod(uptime_seconds, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            uptime_str = f'{days}d {hours}h {minutes}m {seconds}s'
+
+            embed = discord.Embed(title='Raspberry Pi Stats', color=discord.Color.green())
+            embed.add_field(name='CPU Temp', value=temp_str, inline=True)
+            embed.add_field(name='RAM Usage', value=ram_str, inline=True)
+            embed.add_field(name='Uptime', value=uptime_str, inline=False)
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            logger.info(f'pi-stats retrieved by {interaction.user.name}')
+        except Exception as e:
+            logger.error(f'Error retrieving pi-stats: {e}')
+            await interaction.followup.send(f'Error retrieving stats: {e}', ephemeral=True)
+
     @app_commands.command(name='reboot', description='Reboot the bot (Owner Only)')
     async def reboot(self, interaction: discord.Interaction):
         """Reboot the bot. Only the owner can use this command."""
@@ -604,6 +630,61 @@ class CommandsCog(commands.Cog):
         
         # Close the bot connection, which will trigger the shutdown and allow the process manager to restart it
         await self.bot.close()
+
+    @app_commands.command(name='shell', description='Run a shell command on the Pi (Owner Only)')
+    async def shell(self, interaction: discord.Interaction, command: str):
+        """Execute a shell command on the Pi and return the output. Owner only."""
+        owner_id = os.getenv('BOT_OWNER_ID')
+
+        if not owner_id:
+            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
+            return
+
+        if str(interaction.user.id) != owner_id:
+            logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted shell access without permission')
+            await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        logger.info(f'Shell command executed by {interaction.user.name}: {command}')
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await interaction.followup.send('Command timed out after 30 seconds.', ephemeral=True)
+                return
+
+            output = stdout.decode(errors='replace').strip() if stdout else '(no output)'
+            exit_code = proc.returncode
+
+            # Split into 1900-char chunks for Discord's limit
+            header = f'`$ {command}` (exit {exit_code})\n'
+            chunks = []
+            remaining = output
+            while remaining:
+                chunk, remaining = remaining[:1900], remaining[1900:]
+                chunks.append(chunk)
+
+            try:
+                dm = await interaction.user.create_dm()
+                for i, chunk in enumerate(chunks):
+                    part = f' (part {i+1}/{len(chunks)})' if len(chunks) > 1 else ''
+                    await dm.send(f'{header if i == 0 else ""}`{part}`\n```\n{chunk}\n```')
+                await interaction.followup.send('Output sent to your DMs.', ephemeral=True)
+            except discord.Forbidden:
+                # Fallback: send ephemeral (truncated to first chunk only)
+                await interaction.followup.send(f'{header}```\n{chunks[0][:1800]}\n```', ephemeral=True)
+
+        except Exception as e:
+            logger.error(f'Shell command error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
 
 
 async def setup(bot):

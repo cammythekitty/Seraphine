@@ -2,3 +2,4 @@ dotenv
 discord.py
 flask
 requests
+psutil
