@@ -5,6 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 import json
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,7 @@ def save_config(config):
         json.dump(config, f, indent=2)
 
 
-class CommandsCog(commands.Cog):
-    """Example cog to demonstrate the structure."""
-    
+class CommandsCog(commands.Cog):    
     def __init__(self, bot):
         self.bot = bot
     
@@ -47,7 +46,7 @@ class CommandsCog(commands.Cog):
             config[guild_id]['sync_guilds'] = []
         config[guild_id]['sync_guilds'].append(sync_guild_id)
         save_config(config)
-        await interaction.response.send_message(f'✅ Ban synchronization set up with guild {sync_guild_id}.', ephemeral=True)
+        await interaction.response.send_message(f'Ban synchronization set up with guild {sync_guild_id}.', ephemeral=True)
 
     @app_commands.command(name='ban-sync-remove', description='Remove a guild from ban synchronization (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
@@ -59,7 +58,7 @@ class CommandsCog(commands.Cog):
         if guild_id in config and 'sync_guilds' in config[guild_id] and sync_guild_id in config[guild_id]['sync_guilds']:
             config[guild_id]['sync_guilds'].remove(sync_guild_id)
             save_config(config)
-            await interaction.response.send_message(f'✅ Ban synchronization removed for guild {sync_guild_id}.', ephemeral=True)
+            await interaction.response.send_message(f'Ban synchronization removed for guild {sync_guild_id}.', ephemeral=True)
         else:
             await interaction.response.send_message(f'Guild {sync_guild_id} is not currently set up for ban synchronization.', ephemeral=True)
 
@@ -187,7 +186,7 @@ class CommandsCog(commands.Cog):
                     logger.error(f'Error syncing bans from guild {connected_id}: {e}')
             
             logger.info(f'Ban sync complete: {total_bans_synced} bans synced')
-            await interaction.followup.send(f'✅ Ban synchronization complete! Synced {total_bans_synced} ban(s) across {len(all_connected) + 1} guild(s).', ephemeral=True)
+            await interaction.followup.send(f'Ban synchronization complete! Synced {total_bans_synced} ban(s) across {len(all_connected) + 1} guild(s).', ephemeral=True)
         except Exception as e:
             logger.error(f'Error during ban sync: {e}')
             await interaction.followup.send(f'❌ Error during ban sync: {e}', ephemeral=True)
@@ -205,7 +204,7 @@ class CommandsCog(commands.Cog):
         await interaction.response.defer()
         try:
             synced = await self.bot.tree.sync()
-            await interaction.followup.send(f'✅ Synced {len(synced)} command(s)!', ephemeral=True)
+            await interaction.followup.send(f'Synced {len(synced)} command(s)!', ephemeral=True)
             logger.info(f'Commands synced by {interaction.user}: {len(synced)} commands')
         except Exception as e:
             logger.error(f'Sync failed: {e}')
@@ -249,7 +248,7 @@ class CommandsCog(commands.Cog):
         config[guild_id]['roles_channel'] = channel_link
         save_config(config)
         
-        await interaction.response.send_message(f'✅ Roles channel link updated!', ephemeral=True)
+        await interaction.response.send_message(f'Roles channel link updated!', ephemeral=True)
     
     @set_roles_channel.error
     async def set_roles_channel_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -305,6 +304,103 @@ class CommandsCog(commands.Cog):
     async def on_member_join(self, member):
         """Called when a member joins the server."""
         logger.info(f'{member.name} joined the server')
+
+    @app_commands.command(name='bot-logs', description='Dump recent console logs to your DMs (Owner Only)')
+    async def logs(self, interaction: discord.Interaction, lines: int = 50):
+        """Retrieve and send recent console logs to the user's DMs."""
+        await interaction.response.defer(ephemeral=True)
+        owner_id = os.getenv('BOT_OWNER_ID')
+        
+        if not owner_id:
+            logger.error('BOT_OWNER_ID not set in environment variables')
+            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
+            return
+        
+        # Check if the user is the owner
+        if str(interaction.user.id) != owner_id:
+            logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access logs without permission')
+            await interaction.response.send_message('You do not have permission to access bot logs. Only the owner can use this command.', ephemeral=True)
+            return
+        
+        try:
+            # Validate lines parameter
+            if lines < 1:
+                await interaction.followup.send('Lines must be at least 1.', ephemeral=True)
+                return
+            if lines > 500:
+                await interaction.followup.send('Lines cannot exceed 500.', ephemeral=True)
+                return
+            
+            # Get logs from the capture handler
+            log_lines = self.bot.log_capture.get_logs(lines)
+            
+            if not log_lines:
+                await interaction.followup.send('No logs available yet.', ephemeral=True)
+                return
+            
+            # Format logs into a code block
+            logs_text = '\n'.join(log_lines)
+            
+            # Discord has a message limit of 2000 characters
+            # Split into chunks if necessary
+            chunks = []
+            current_chunk = []
+            current_length = 0
+            
+            for line in log_lines:
+                line_with_newline = line + '\n'
+                if current_length + len(line_with_newline) > 1900:  # Leave room for code block markers
+                    if current_chunk:
+                        chunks.append('\n'.join(current_chunk))
+                    current_chunk = [line]
+                    current_length = len(line) + 1
+                else:
+                    current_chunk.append(line)
+                    current_length += len(line_with_newline)
+            
+            if current_chunk:
+                chunks.append('\n'.join(current_chunk))
+            
+            # Send logs to user's DMs
+            try:
+                dm_channel = await interaction.user.create_dm()
+                for i, chunk in enumerate(chunks):
+                    chunk_num = f' (Part {i+1}/{len(chunks)})' if len(chunks) > 1 else ''
+                    message = f'```\n{chunk}\n```'
+                    await dm_channel.send(f'**Last {lines} log lines{chunk_num}:**\n{message}')
+                
+                await interaction.followup.send(f'Sent {lines} log line(s) to your DMs!', ephemeral=True)
+                logger.info(f'{interaction.user.name} retrieved {lines} log lines')
+            except discord.Forbidden:
+                await interaction.followup.send('I cannot send you DMs. Please check your privacy settings.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Error retrieving logs: {e}')
+            await interaction.followup.send(f'Error retrieving logs: {e}', ephemeral=True)
+
+
+    @app_commands.command(name='reboot', description='Reboot the bot (Owner Only)')
+    async def reboot(self, interaction: discord.Interaction):
+        """Reboot the bot. Only the owner can use this command."""
+        # Get the owner UID from environment variable
+        owner_id = os.getenv('BOT_OWNER_ID')
+        
+        if not owner_id:
+            logger.error('BOT_OWNER_ID not set in environment variables')
+            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
+            return
+        
+        # Check if the user is the owner
+        if str(interaction.user.id) != owner_id:
+            logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted reboot without permission')
+            await interaction.response.send_message('You do not have permission to reboot the bot. Only the owner can use this command.', ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send('Rebooting bot...', ephemeral=True)
+        logger.info(f'Bot reboot initiated by {interaction.user.name} (ID: {interaction.user.id})')
+        
+        # Close the bot connection, which will trigger the shutdown and allow the process manager to restart it
+        await self.bot.close()
 
 
 async def setup(bot):

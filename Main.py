@@ -6,13 +6,33 @@ import os
 from dotenv import load_dotenv
 import logging
 from pathlib import Path
+from collections import deque
 
 # Load environment variables
 load_dotenv()
 
+# Custom logging handler to store logs in memory
+class LogCapture(logging.Handler):
+    """Custom handler that stores logs in memory for retrieval."""
+    def __init__(self, max_logs=500):
+        super().__init__()
+        self.logs = deque(maxlen=max_logs)
+    
+    def emit(self, record):
+        self.logs.append(self.format(record))
+    
+    def get_logs(self, lines=50):
+        """Get the last N lines of logs."""
+        return list(self.logs)[-lines:]
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add custom log capture handler
+log_capture = LogCapture(max_logs=500)
+log_capture.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(log_capture)
 
 # Bot configuration
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -23,6 +43,7 @@ intents.message_content = True  # Required for reading message content
 intents.members = True
 
 bot = commands.Bot(command_prefix="", intents=intents)
+bot.log_capture = log_capture  # Attach log capture handler to bot for cogs to access
 
 
 # Events
