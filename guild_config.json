@@ -5,11 +5,8 @@
       "1408876053044400191",
       "1420805626245939234"
     ],
-    "word_filter_enabled": true,
-    "banned_words": [
-      "mice"
-    ],
-    "word_filter_expiry": "2026-04-06T02:11:27.132123"
+    "word_filter_enabled": false,
+    "banned_words": []
   },
   "1408876053044400191": {
     "roles_channel": "https://discord.com/channels/1408876053044400191/1408892733401337886",
