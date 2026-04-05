@@ -4,3 +4,4 @@
 *License.config
 *.env
 .env.example
+.json
