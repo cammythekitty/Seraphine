@@ -53,8 +53,14 @@ async def on_ready():
     logger.info(f'{bot.user} has connected to Discord!')
     logger.info(f'Bot ID: {bot.user.id}')
     try:
-        synced = await bot.tree.sync()
-        logger.info(f'Synced {len(synced)} command(s)')
+        guild_id = os.getenv('DISCORD_GUILD_ID')
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            synced = await bot.tree.sync(guild=guild)
+            logger.info(f'Synced {len(synced)} command(s) to guild {guild_id}')
+        else:
+            synced = await bot.tree.sync()
+            logger.info(f'Synced {len(synced)} global command(s)')
     except Exception as e:
         logger.error(f'Failed to sync commands: {e}')
 

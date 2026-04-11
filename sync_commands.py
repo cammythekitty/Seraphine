@@ -45,8 +45,14 @@ async def on_ready():
     """Called when the bot is ready."""
     print(f'{bot.user} has connected to Discord!')
     try:
-        synced = await bot.tree.sync()
-        print(f'\n✅ Synced {len(synced)} command(s)!')
+        guild_id = os.getenv('DISCORD_GUILD_ID')
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            synced = await bot.tree.sync(guild=guild)
+            print(f'\n✅ Synced {len(synced)} guild command(s) to {guild_id}!')
+        else:
+            synced = await bot.tree.sync()
+            print(f'\n✅ Synced {len(synced)} global command(s)!')
         for cmd in synced:
             print(f'  - {cmd.name}')
         print('\nCommands updated successfully. You can now close this window.')
