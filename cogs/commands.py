@@ -35,22 +35,38 @@ def save_config(config):
 class CommandsCog(commands.Cog):    
     def __init__(self, bot):
         self.bot = bot
+        self._allowed_owner_ids = self._load_env_owner_ids()
 
-    def _get_allowed_owner_ids(self):
+    def _load_env_owner_ids(self):
+        owner_ids = set()
         owner_id = os.getenv('BOT_OWNER_ID')
         co_owner_ids = os.getenv('BOT_CO_OWNER_IDS') or os.getenv('BOT_CO_OWNER_ID')
-        allowed = set()
+
         if owner_id:
-            allowed.add(owner_id.strip())
+            owner_ids.add(owner_id.strip())
         if co_owner_ids:
             for co_id in co_owner_ids.replace(';', ',').split(','):
                 co_id = co_id.strip()
                 if co_id:
-                    allowed.add(co_id)
-        return allowed
+                    owner_ids.add(co_id)
+        return owner_ids
 
-    def _is_owner_or_coowner(self, user_id: str) -> bool:
-        return str(user_id) in self._get_allowed_owner_ids()
+    async def _get_allowed_owner_ids(self):
+        if self._allowed_owner_ids:
+            return self._allowed_owner_ids
+
+        try:
+            app_info = await self.bot.application_info()
+            if app_info and app_info.owner:
+                self._allowed_owner_ids.add(str(app_info.owner.id))
+        except Exception as e:
+            logger.warning(f'Could not resolve application owner: {e}')
+
+        return self._allowed_owner_ids
+
+    async def _is_owner_or_coowner(self, user_id: str) -> bool:
+        allowed = await self._get_allowed_owner_ids()
+        return str(user_id) in allowed
     
     @app_commands.command(name='ban-sync-add', description='Set up ban synchronization with another guild (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
@@ -386,14 +402,7 @@ class CommandsCog(commands.Cog):
     async def logs(self, interaction: discord.Interaction, lines: int = 50):
         """Retrieve and send recent console logs to the user's DMs."""
         await interaction.response.defer(ephemeral=True)
-        owner_id = os.getenv('BOT_OWNER_ID')
-        
-        if not owner_id:
-            logger.error('BOT_OWNER_ID not set in environment variables')
-            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
-            return
-        
-        if not self._is_owner_or_coowner(interaction.user.id):
+        if not await self._is_owner_or_coowner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access logs without permission')
             await interaction.response.send_message('You do not have permission to access bot logs. Only the owner or co-owner can use this command.', ephemeral=True)
             return
@@ -457,13 +466,7 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='pi-stats', description='Show CPU temp, RAM usage, and uptime of the Pi (Owner/Co-owner Only)')
     async def pi_stats(self, interaction: discord.Interaction):
         """Returns Raspberry Pi system stats. Owner or co-owner only."""
-        owner_id = os.getenv('BOT_OWNER_ID')
-
-        if not owner_id:
-            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
-            return
-
-        if not self._is_owner_or_coowner(interaction.user.id):
+        if not await self._is_owner_or_coowner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access pi-stats without permission')
             await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
             return
@@ -516,15 +519,7 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='reboot', description='Reboot the bot (Owner/Co-owner Only)')
     async def reboot(self, interaction: discord.Interaction):
         """Reboot the bot. Only the owner or co-owner can use this command."""
-        # Get the owner UID from environment variable
-        owner_id = os.getenv('BOT_OWNER_ID')
-        
-        if not owner_id:
-            logger.error('BOT_OWNER_ID not set in environment variables')
-            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
-            return
-        
-        if not self._is_owner_or_coowner(interaction.user.id):
+        if not await self._is_owner_or_coowner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted reboot without permission')
             await interaction.response.send_message('You do not have permission to reboot the bot. Only the owner or co-owner can use this command.', ephemeral=True)
             return
@@ -539,13 +534,7 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='shell', description='Run a shell command on the Pi (Owner/Co-owner Only)')
     async def shell(self, interaction: discord.Interaction, command: str):
         """Execute a shell command on the Pi and return the output. Owner or co-owner only."""
-        owner_id = os.getenv('BOT_OWNER_ID')
-
-        if not owner_id:
-            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
-            return
-
-        if not self._is_owner_or_coowner(interaction.user.id):
+        if not await self._is_owner_or_coowner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted shell access without permission')
             await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
             return
