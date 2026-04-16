@@ -40,15 +40,9 @@ class CommandsCog(commands.Cog):
     def _load_env_owner_ids(self):
         owner_ids = set()
         owner_id = os.getenv('BOT_OWNER_ID')
-        co_owner_ids = os.getenv('BOT_CO_OWNER_IDS') or os.getenv('BOT_CO_OWNER_ID')
 
         if owner_id:
             owner_ids.add(owner_id.strip())
-        if co_owner_ids:
-            for co_id in co_owner_ids.replace(';', ',').split(','):
-                co_id = co_id.strip()
-                if co_id:
-                    owner_ids.add(co_id)
         return owner_ids
 
     async def _get_allowed_owner_ids(self):
@@ -64,10 +58,13 @@ class CommandsCog(commands.Cog):
 
         return self._allowed_owner_ids
 
-    async def _is_owner_or_coowner(self, user_id: str) -> bool:
+    async def _is_owner(self, user_id: str) -> bool:
         allowed = await self._get_allowed_owner_ids()
         return str(user_id) in allowed
     
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+
     @app_commands.command(name='ban-sync-add', description='Set up ban synchronization with another guild (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def ban_sync_add(self, interaction: discord.Interaction, sync_guild_id: str):
@@ -398,13 +395,13 @@ class CommandsCog(commands.Cog):
         """Called when a member joins the server."""
         logger.info(f'{member.name} joined the server')
     
-    @app_commands.command(name='bot-logs', description='Dump recent console logs to your DMs (Owner/Co-owner Only)')
+    @app_commands.command(name='bot-logs', description='Dump recent console logs to your DMs (Owner Only)')
     async def logs(self, interaction: discord.Interaction, lines: int = 50):
         """Retrieve and send recent console logs to the user's DMs."""
         await interaction.response.defer(ephemeral=True)
-        if not await self._is_owner_or_coowner(interaction.user.id):
+        if not await self._is_owner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access logs without permission')
-            await interaction.response.send_message('You do not have permission to access bot logs. Only the owner or co-owner can use this command.', ephemeral=True)
+            await interaction.response.send_message('You do not have permission to access bot logs. Only the owner can use this command.', ephemeral=True)
             return
         
         try:
@@ -463,12 +460,12 @@ class CommandsCog(commands.Cog):
             await interaction.followup.send(f'Error retrieving logs: {e}', ephemeral=True)
 
 
-    @app_commands.command(name='pi-stats', description='Show CPU temp, RAM usage, and uptime of the Pi (Owner/Co-owner Only)')
+    @app_commands.command(name='pi-stats', description='Show CPU temp, RAM usage, and uptime of the Pi (Owner Only)')
     async def pi_stats(self, interaction: discord.Interaction):
-        """Returns Raspberry Pi system stats. Owner or co-owner only."""
-        if not await self._is_owner_or_coowner(interaction.user.id):
+        """Returns Raspberry Pi system stats. Owner only."""
+        if not await self._is_owner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access pi-stats without permission')
-            await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
+            await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -516,12 +513,12 @@ class CommandsCog(commands.Cog):
             logger.error(f'Error retrieving pi-stats: {e}')
             await interaction.followup.send(f'Error retrieving stats: {e}', ephemeral=True)
 
-    @app_commands.command(name='reboot', description='Reboot the bot (Owner/Co-owner Only)')
+    @app_commands.command(name='reboot', description='Reboot the bot (Owner Only)')
     async def reboot(self, interaction: discord.Interaction):
-        """Reboot the bot. Only the owner or co-owner can use this command."""
-        if not await self._is_owner_or_coowner(interaction.user.id):
+        """Reboot the bot. Only the owner can use this command."""
+        if not await self._is_owner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted reboot without permission')
-            await interaction.response.send_message('You do not have permission to reboot the bot. Only the owner or co-owner can use this command.', ephemeral=True)
+            await interaction.response.send_message('You do not have permission to reboot the bot. Only the owner can use this command.', ephemeral=True)
             return
         
         await interaction.response.defer(ephemeral=True)
@@ -531,12 +528,12 @@ class CommandsCog(commands.Cog):
         # Close the bot connection, which will trigger the shutdown and allow the process manager to restart it
         await self.bot.close()
 
-    @app_commands.command(name='shell', description='Run a shell command on the Pi (Owner/Co-owner Only)')
+    @app_commands.command(name='shell', description='Run a shell command on the Pi (Owner Only)')
     async def shell(self, interaction: discord.Interaction, command: str):
-        """Execute a shell command on the Pi and return the output. Owner or co-owner only."""
-        if not await self._is_owner_or_coowner(interaction.user.id):
+        """Execute a shell command on the Pi and return the output. Owner only."""
+        if not await self._is_owner(interaction.user.id):
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted shell access without permission')
-            await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
+            await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
