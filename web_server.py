@@ -4,6 +4,9 @@ Provides invite link, user authentication, and Terms & Conditions
 """
 from flask import Flask, render_template, redirect, url_for, request, session
 import os
+import json
+from pathlib import Path
+from datetime import datetime
 from dotenv import load_dotenv
 import requests
 
@@ -11,6 +14,19 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'discord-bot-secret-key')
+
+PROFILE_FILE = Path('profiles.json')
+
+def load_profiles():
+    if PROFILE_FILE.exists():
+        with open(PROFILE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_profiles(data):
+    with open(PROFILE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
 
 # Bot configuration
 BOT_ID = os.getenv('BOT_ID', 'YOUR_BOT_ID_HERE')
@@ -105,15 +121,30 @@ def callback():
         return f'Error during authentication: {str(e)}', 500
 
 
-@app.route('/dashboard')
+@app.route('/dashboard', methods=['GET', 'POST'])
 def dashboard():
     """User dashboard after OAuth2 login."""
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
+
+    user_id = session.get('user_id')
+    profiles = load_profiles()
+    profile = profiles.get(user_id, {})
+    message = None
+
+    if request.method == 'POST':
+        profile_text = request.form.get('profile_text', '').strip()
+        profile['text'] = profile_text
+        profile['updated_at'] = datetime.utcnow().isoformat() + 'Z'
+        profiles[user_id] = profile
+        save_profiles(profiles)
+        message = 'Your profile has been updated.'
+
     return render_template('dashboard.html', 
                          username=session.get('username'),
-                         user_id=session.get('user_id'))
+                         user_id=user_id,
+                         profile=profile,
+                         message=message)
 
 
 @app.route('/logout')

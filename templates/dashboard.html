@@ -115,6 +115,26 @@
             <strong>User ID:</strong> {{ user_id }}
         </div>
         
+        {% if message %}
+        <div class="info-box" style="border-left-color: #4caf50; background: #e8f5e9;">
+            {{ message }}
+        </div>
+        {% endif %}
+
+        <div class="info-box">
+            <strong>Your profile</strong>
+            <p style="margin-top: 10px; white-space: pre-line; color: #555;">{{ profile.text or 'No profile content yet. Use the form below to add something to your profile.' }}</p>
+            {% if profile.updated_at %}
+            <small style="color: #777;">Last updated: {{ profile.updated_at }}</small>
+            {% endif %}
+        </div>
+
+        <form method="post">
+            <label for="profile_text" style="display:block; margin-bottom: 10px; font-weight: 600; color: #333;">Add to your profile</label>
+            <textarea id="profile_text" name="profile_text" rows="6" style="width:100%; padding: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 1em;">{{ profile.text or '' }}</textarea>
+            <button type="submit" class="btn btn-primary" style="margin-top: 20px;">Save Profile</button>
+        </form>
+
         <h2 style="margin-top: 30px;">What's Next?</h2>
         <ul class="features">
             <li>Configure the bot for your server</li>
