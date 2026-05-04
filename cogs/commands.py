@@ -7,7 +7,9 @@ import logging
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
+import re
 import subprocess
 import asyncio
 import psutil
@@ -35,36 +37,7 @@ def save_config(config):
 class CommandsCog(commands.Cog):    
     def __init__(self, bot):
         self.bot = bot
-        self._allowed_owner_ids = self._load_env_owner_ids()
-
-    def _load_env_owner_ids(self):
-        owner_ids = set()
-        owner_id = os.getenv('BOT_OWNER_ID')
-
-        if owner_id:
-            owner_ids.add(owner_id.strip())
-        return owner_ids
-
-    async def _get_allowed_owner_ids(self):
-        if self._allowed_owner_ids:
-            return self._allowed_owner_ids
-
-        try:
-            app_info = await self.bot.application_info()
-            if app_info and app_info.owner:
-                self._allowed_owner_ids.add(str(app_info.owner.id))
-        except Exception as e:
-            logger.warning(f'Could not resolve application owner: {e}')
-
-        return self._allowed_owner_ids
-
-    async def _is_owner(self, user_id: str) -> bool:
-        allowed = await self._get_allowed_owner_ids()
-        return str(user_id) in allowed
     
-    @app_commands.allowed_installs(guilds=True, users=True)
-    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-
     @app_commands.command(name='ban-sync-add', description='Set up ban synchronization with another guild (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def ban_sync_add(self, interaction: discord.Interaction, sync_guild_id: str):
@@ -160,39 +133,6 @@ class CommandsCog(commands.Cog):
         
         return ban_count
 
-    async def _sync_unban_to_guilds(self, user_ids, guild_ids: list, reason: str = 'Unban synced from another server'):
-        """Unban user(s) across multiple guilds. user_ids can be a single int or a list of ints."""
-        if isinstance(user_ids, int):
-            user_ids = [user_ids]
-
-        unban_count = 0
-        for user_id in user_ids:
-            try:
-                user = await self.bot.fetch_user(user_id)
-            except discord.NotFound:
-                logger.warning(f'User with ID {user_id} not found')
-                continue
-
-            for guild_id in guild_ids:
-                try:
-                    guild = self.bot.get_guild(int(guild_id))
-                    if guild:
-                        try:
-                            await guild.fetch_ban(user)
-                            # Is banned, proceed with unbanning
-                            await guild.unban(user, reason=reason)
-                            unban_count += 1
-                            logger.info(f'Unbanned user {user_id} in guild {guild.name}')
-                        except discord.NotFound:
-                            # Not banned, skip
-                            pass
-                    else:
-                        logger.warning(f'Guild with ID {guild_id} not found')
-                except Exception as e:
-                    logger.error(f'Error unbanning user {user_id} in guild {guild_id}: {e}')
-
-        return unban_count
-
     @app_commands.command(name='sync-bans', description='syncs the bans across set guilds (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def sync_bans(self, interaction: discord.Interaction):
@@ -255,7 +195,7 @@ class CommandsCog(commands.Cog):
             await interaction.followup.send(f'Ban synchronization complete! Synced {total_bans_synced} ban(s) across {len(all_connected) + 1} guild(s).', ephemeral=True)
         except Exception as e:
             logger.error(f'Error during ban sync: {e}')
-            await interaction.followup.send(f'Error during ban sync: {e}', ephemeral=True)
+            await interaction.followup.send(f'❌ Error during ban sync: {e}', ephemeral=True)
 
     @app_commands.command(name='leter-sucks', description='pings letter and says he sucks')
     async def notify(self, interaction: discord.Interaction):
@@ -274,7 +214,7 @@ class CommandsCog(commands.Cog):
             logger.info(f'Commands synced by {interaction.user}: {len(synced)} commands')
         except Exception as e:
             logger.error(f'Sync failed: {e}')
-            await interaction.followup.send(f'Sync failed: {e}', ephemeral=True)
+            await interaction.followup.send(f'❌ Sync failed: {e}', ephemeral=True)
 
     @sync.error
     async def sync_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -367,39 +307,195 @@ class CommandsCog(commands.Cog):
         )
 
     @commands.Cog.listener()
-    async def on_member_unban(self, guild: discord.Guild, user: discord.User):
-        """Called when a user is unbanned. Automatically syncs the unban across all connected guilds."""
-        config = load_config()
-        guild_id = str(guild.id)
-
-        if guild_id not in config or 'sync_guilds' not in config[guild_id]:
-            logger.info(f'No sync guilds configured for {guild.name}, no unban sync triggered')
-            return
-
-        all_connected = self._get_all_connected_guilds(guild_id, config)
-
-        if not all_connected:
-            logger.info(f'No connected guilds found for unban sync from {guild.name}')
-            return
-
-        logger.info(f'Unban detected in {guild.name} for user {user.name} (ID: {user.id}). Syncing to {len(all_connected)} connected guild(s)...')
-
-        await self._sync_unban_to_guilds(
-            user.id,
-            list(all_connected),
-            f'Unban synced from {guild.name} (ID: {guild.id})'
-        )
-
-    @commands.Cog.listener()
     async def on_member_join(self, member):
         """Called when a member joins the server."""
         logger.info(f'{member.name} joined the server')
     
+    def _is_word_filter_expired(self, config: dict, guild_id: str) -> bool:
+        """Check if the word filter expiration date has passed."""
+        if guild_id not in config or 'word_filter_expiry' not in config[guild_id]:
+            return True
+        
+        try:
+            expiry_date = datetime.fromisoformat(config[guild_id]['word_filter_expiry'])
+            return datetime.now() > expiry_date
+        except (ValueError, TypeError):
+            return True
+    
+    def _reset_word_filter_if_expired(self, config: dict, guild_id: str):
+        """Reset banned words if the daily expiration has passed."""
+        if self._is_word_filter_expired(config, guild_id):
+            if guild_id in config:
+                config[guild_id]['banned_words'] = []
+                config[guild_id]['word_filter_expiry'] = (datetime.now() + timedelta(days=1)).isoformat()
+                save_config(config)
+    
+    @app_commands.command(name='word-filter-toggle', description='Toggle word filtering on/off (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def word_filter_toggle(self, interaction: discord.Interaction):
+        """Toggle the word filter feature on or off for the guild."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        # Toggle the filter
+        current_state = config[guild_id].get('word_filter_enabled', False)
+        config[guild_id]['word_filter_enabled'] = not current_state
+        
+        # Initialize word list and expiry if needed
+        if 'banned_words' not in config[guild_id]:
+            config[guild_id]['banned_words'] = []
+        if 'word_filter_expiry' not in config[guild_id]:
+            config[guild_id]['word_filter_expiry'] = (datetime.now() + timedelta(days=1)).isoformat()
+        
+        save_config(config)
+        new_state = "**enabled**" if config[guild_id]['word_filter_enabled'] else "❌ **disabled**"
+        await interaction.response.send_message(f'Word filter is now {new_state}', ephemeral=True)
+    
+    @app_commands.command(name='ban-word', description='Ban a word for today (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ban_word(self, interaction: discord.Interaction, word: str):
+        """Add a word to the daily ban list."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config:
+            config[guild_id] = {}
+        
+        # Check if filter is enabled
+        if not config[guild_id].get('word_filter_enabled', False):
+            await interaction.response.send_message('❌ Word filter is not enabled. Use `/word-filter-toggle` first.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        # Initialize if needed
+        if 'banned_words' not in config[guild_id]:
+            config[guild_id]['banned_words'] = []
+        
+        word_lower = word.lower()
+        if word_lower in config[guild_id]['banned_words']:
+            await interaction.response.send_message(f'⚠️ The word "{word}" is already banned!', ephemeral=True)
+            return
+        
+        config[guild_id]['banned_words'].append(word_lower)
+        save_config(config)
+        await interaction.response.send_message(f'🚫 Banned the word "{word}" for today!', ephemeral=True)
+    
+    @app_commands.command(name='unban-word', description='Unban a word (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def unban_word(self, interaction: discord.Interaction, word: str):
+        """Remove a word from the daily ban list."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config or 'banned_words' not in config[guild_id]:
+            await interaction.response.send_message('❌ No banned words found.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        word_lower = word.lower()
+        if word_lower not in config[guild_id]['banned_words']:
+            await interaction.response.send_message(f'❌ The word "{word}" is not currently banned.', ephemeral=True)
+            return
+        
+        config[guild_id]['banned_words'].remove(word_lower)
+        save_config(config)
+        await interaction.response.send_message(f'✅ Unbanned the word "{word}"!', ephemeral=True)
+    
+    @app_commands.command(name='banned-words', description='List all currently banned words (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def list_banned_words(self, interaction: discord.Interaction):
+        """Show all currently banned words for today."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        
+        if guild_id not in config or 'banned_words' not in config[guild_id]:
+            await interaction.response.send_message('❌ No banned words found.', ephemeral=True)
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        banned = config[guild_id].get('banned_words', [])
+        filter_enabled = config[guild_id].get('word_filter_enabled', False)
+        
+        if not banned:
+            status = "✅ enabled" if filter_enabled else "❌ disabled"
+            await interaction.response.send_message(f'No banned words for today. (Filter status: {status})', ephemeral=True)
+            return
+        
+        word_list = ', '.join([f'`{word}`' for word in sorted(banned)])
+        status = "✅ enabled" if filter_enabled else "❌ disabled"
+        await interaction.response.send_message(f'**Banned words for today** (Filter: {status}):\n{word_list}', ephemeral=True)
+    
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Listen to messages and filter banned words."""
+        # Ignore bot messages
+        if message.author == self.bot.user:
+            return
+        
+        # Ignore DMs
+        if not message.guild:
+            return
+        
+        # Ignore if bot is trying to process commands
+        if message.content.startswith('/'):
+            return
+        
+        config = load_config()
+        guild_id = str(message.guild.id)
+        
+        # Check if word filter is enabled for this guild
+        if guild_id not in config or not config[guild_id].get('word_filter_enabled', False):
+            return
+        
+        # Reset if expired
+        self._reset_word_filter_if_expired(config, guild_id)
+        
+        banned_words = config[guild_id].get('banned_words', [])
+        if not banned_words:
+            return
+        
+        message_lower = message.content.lower()
+        
+        # Check if any banned word appears in the message (as whole word, case-insensitive)
+        banned_found = []
+        for banned_word in banned_words:
+            # Use word boundary regex to match whole words only
+            if re.search(rf'\b{re.escape(banned_word)}\b', message_lower):
+                banned_found.append(banned_word)
+        
+        if banned_found:
+            try:
+                await message.delete()
+                user_mention = message.author.mention
+                words_str = ', '.join([f'`{word}`' for word in banned_found])
+                await message.channel.send(f"{user_mention} - Your message was deleted for containing banned word(s): {words_str} 🚫", delete_after=5)
+            except discord.Forbidden:
+                logger.warning(f'Could not delete message from {message.author}: insufficient permissions')
+        roast = random.choice(roasts)
+        await interaction.response.send_message(f"**Roast for {target_user.mention}:** {roast}")
+
     @app_commands.command(name='bot-logs', description='Dump recent console logs to your DMs (Owner Only)')
     async def logs(self, interaction: discord.Interaction, lines: int = 50):
         """Retrieve and send recent console logs to the user's DMs."""
         await interaction.response.defer(ephemeral=True)
-        if not await self._is_owner(interaction.user.id):
+        owner_id = os.getenv('BOT_OWNER_ID')
+        
+        if not owner_id:
+            logger.error('BOT_OWNER_ID not set in environment variables')
+            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
+            return
+        
+        # Check if the user is the owner
+        if str(interaction.user.id) != owner_id:
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access logs without permission')
             await interaction.response.send_message('You do not have permission to access bot logs. Only the owner can use this command.', ephemeral=True)
             return
@@ -463,7 +559,13 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='pi-stats', description='Show CPU temp, RAM usage, and uptime of the Pi (Owner Only)')
     async def pi_stats(self, interaction: discord.Interaction):
         """Returns Raspberry Pi system stats. Owner only."""
-        if not await self._is_owner(interaction.user.id):
+        owner_id = os.getenv('BOT_OWNER_ID')
+
+        if not owner_id:
+            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
+            return
+
+        if str(interaction.user.id) != owner_id:
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted to access pi-stats without permission')
             await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
             return
@@ -494,17 +596,9 @@ class CommandsCog(commands.Cog):
             minutes, seconds = divmod(remainder, 60)
             uptime_str = f'{days}d {hours}h {minutes}m {seconds}s'
 
-            # Disk Usage
-            disk = psutil.disk_usage('/')
-            disk_used = disk.used / (1024 ** 3)
-            disk_total = disk.total / (1024 ** 3)
-            disk_percent = disk.percent
-            disk_str = f'{disk_used:.1f} GB / {disk_total:.1f} GB ({disk_percent}%)'
-
             embed = discord.Embed(title='Raspberry Pi Stats', color=discord.Color.green())
             embed.add_field(name='CPU Temp', value=temp_str, inline=True)
             embed.add_field(name='RAM Usage', value=ram_str, inline=True)
-            embed.add_field(name='Disk Utilization', value=disk_str, inline=True)
             embed.add_field(name='Uptime', value=uptime_str, inline=False)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
@@ -516,7 +610,16 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='reboot', description='Reboot the bot (Owner Only)')
     async def reboot(self, interaction: discord.Interaction):
         """Reboot the bot. Only the owner can use this command."""
-        if not await self._is_owner(interaction.user.id):
+        # Get the owner UID from environment variable
+        owner_id = os.getenv('BOT_OWNER_ID')
+        
+        if not owner_id:
+            logger.error('BOT_OWNER_ID not set in environment variables')
+            await interaction.response.send_message('Owner ID not configured. Contact the bot administrator.', ephemeral=True)
+            return
+        
+        # Check if the user is the owner
+        if str(interaction.user.id) != owner_id:
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted reboot without permission')
             await interaction.response.send_message('You do not have permission to reboot the bot. Only the owner can use this command.', ephemeral=True)
             return
@@ -531,7 +634,13 @@ class CommandsCog(commands.Cog):
     @app_commands.command(name='shell', description='Run a shell command on the Pi (Owner Only)')
     async def shell(self, interaction: discord.Interaction, command: str):
         """Execute a shell command on the Pi and return the output. Owner only."""
-        if not await self._is_owner(interaction.user.id):
+        owner_id = os.getenv('BOT_OWNER_ID')
+
+        if not owner_id:
+            await interaction.response.send_message('Owner ID not configured.', ephemeral=True)
+            return
+
+        if str(interaction.user.id) != owner_id:
             logger.warning(f'{interaction.user.name} (ID: {interaction.user.id}) attempted shell access without permission')
             await interaction.response.send_message('Only the owner can use this command.', ephemeral=True)
             return
