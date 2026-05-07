@@ -1,8 +1,9 @@
 # A simple discord bot that me and my friends use for custom commands and funnies
+import os
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
+
 from dotenv import load_dotenv
 import logging
 from pathlib import Path
