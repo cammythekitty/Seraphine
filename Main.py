@@ -1,13 +1,5 @@
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-# A simple discord bot that me and my friends use for custom commands and funnies
+# A simple discord bot that me and my friends use for custom commands
 import os
-=======
-# A simple discord bot that me and my friends use for custom commands
->>>>>>> Stashed changes
-=======
-# A simple discord bot that me and my friends use for custom commands
->>>>>>> Stashed changes
 import discord
 from discord.ext import commands
 from discord import app_commands
