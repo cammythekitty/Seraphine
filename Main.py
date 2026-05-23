@@ -1,5 +1,9 @@
+<<<<<<< Updated upstream
 # A simple discord bot that me and my friends use for custom commands and funnies
 import os
+=======
+# A simple discord bot that me and my friends use for custom commands
+>>>>>>> Stashed changes
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -46,6 +50,11 @@ intents.members = True
 bot = commands.Bot(command_prefix="", intents=intents)
 bot.log_capture = log_capture  # Attach log capture handler to bot for cogs to access
 
+# Rate limit fix to 50/s using X-RateLimit-Scope: global
+@bot.before_invoke
+async def before_invoke(ctx):
+    """Before each command, wait to respect rate limits."""
+    await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.timedelta(seconds=0.02))  # 50 commands per second
 
 # Events
 @bot.event

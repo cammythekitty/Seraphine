@@ -259,12 +259,6 @@ class CommandsCog(commands.Cog):
         except Exception as e:
             logger.error(f'Error during ban sync: {e}')
             await interaction.followup.send(f'Error during ban sync: {e}', ephemeral=True)
-
-    @app_commands.command(name='leter-sucks', description='pings letter and says he sucks')
-    async def notify(self, interaction: discord.Interaction):
-        """Notifies a hardcoded user."""
-        LETER_ID = 1289992140323033152  # Replace with actual ID
-        await interaction.response.send_message(f'<@{LETER_ID}> - You Suck! :D')
         
     @app_commands.command(name='sync', description='Force slash commands to update (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
@@ -325,7 +319,7 @@ class CommandsCog(commands.Cog):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message('You must be an admin to use this command!', ephemeral=True)
     
-    @app_commands.command(name='echo', description='Echoes the user input In Channels Hides Who Wrote It (Admin Only)')
+    @app_commands.command(name='echo', description='Echoes the user input In Channels (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def echo(self, interaction: discord.Interaction, message: str, channel: discord.TextChannel = None):
         """Echoes the user input to a specified channel or current channel."""
