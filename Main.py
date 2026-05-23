@@ -1,6 +1,10 @@
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 # A simple discord bot that me and my friends use for custom commands and funnies
 import os
+=======
+# A simple discord bot that me and my friends use for custom commands
+>>>>>>> Stashed changes
 =======
 # A simple discord bot that me and my friends use for custom commands
 >>>>>>> Stashed changes
