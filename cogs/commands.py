@@ -49,6 +49,12 @@ class CommandsCog(commands.Cog):
                 co_id = co_id.strip()
                 if co_id:
                     owner_ids.add(co_id)
+
+        # Also load co-owners persisted via /set-co-owner
+        config = load_config()
+        for co_id in config.get('co_owners', []):
+            owner_ids.add(str(co_id))
+
         return owner_ids
 
     async def _get_allowed_owner_ids(self):
@@ -362,6 +368,7 @@ class CommandsCog(commands.Cog):
             list(all_connected),
             f'Ban synced from {guild.name} (ID: {guild.id})'
         )
+        await self._post_mod_log(guild, 'Ban', user, self.bot.user, 'User banned (auto-logged)')
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
@@ -573,6 +580,364 @@ class CommandsCog(commands.Cog):
         except Exception as e:
             logger.error(f'Shell command error: {e}')
             await interaction.followup.send(f'Error: {e}', ephemeral=True)
+
+
+    # -------------------------------------------------------------------------
+    # Admin commands
+    # -------------------------------------------------------------------------
+
+    @app_commands.command(name='kick', description='Kick a member from the server (Admin Only)')
+    @app_commands.checks.has_permissions(kick_members=True)
+    async def kick(self, interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
+        """Kick a member with an optional reason."""
+        if member == interaction.user:
+            await interaction.response.send_message('You cannot kick yourself.', ephemeral=True)
+            return
+        if member.top_role >= interaction.guild.me.top_role:
+            await interaction.response.send_message('I cannot kick that member — their role is equal to or higher than mine.', ephemeral=True)
+            return
+        try:
+            await member.kick(reason=f'{reason} (kicked by {interaction.user})')
+            await interaction.response.send_message(f'Kicked **{member}** — {reason}', ephemeral=True)
+            logger.info(f'{interaction.user} kicked {member} for: {reason}')
+            await self._post_mod_log(interaction.guild, 'Kick', member, interaction.user, reason)
+        except discord.Forbidden:
+            await interaction.response.send_message('I do not have permission to kick that member.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Kick error: {e}')
+            await interaction.response.send_message(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='mute', description='Timeout (mute) a member for a duration (Admin Only)')
+    @app_commands.checks.has_permissions(moderate_members=True)
+    async def mute(self, interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = 'No reason provided'):
+        """Timeout a member using Discord's native timeout. Max 40320 minutes (28 days)."""
+        if member == interaction.user:
+            await interaction.response.send_message('You cannot mute yourself.', ephemeral=True)
+            return
+        if minutes < 1 or minutes > 40320:
+            await interaction.response.send_message('Duration must be between 1 and 40320 minutes (28 days).', ephemeral=True)
+            return
+        try:
+            import datetime as dt
+            until = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
+            await member.timeout(until, reason=f'{reason} (by {interaction.user})')
+            await interaction.response.send_message(f'Muted **{member}** for {minutes} minute(s) — {reason}', ephemeral=True)
+            logger.info(f'{interaction.user} muted {member} for {minutes}m: {reason}')
+            await self._post_mod_log(interaction.guild, f'Mute ({minutes}m)', member, interaction.user, reason)
+        except discord.Forbidden:
+            await interaction.response.send_message('I do not have permission to timeout that member.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Mute error: {e}')
+            await interaction.response.send_message(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='unmute', description='Remove a timeout from a member (Admin Only)')
+    @app_commands.checks.has_permissions(moderate_members=True)
+    async def unmute(self, interaction: discord.Interaction, member: discord.Member, reason: str = 'No reason provided'):
+        """Remove an active timeout from a member."""
+        try:
+            await member.timeout(None, reason=f'{reason} (by {interaction.user})')
+            await interaction.response.send_message(f'Removed timeout from **{member}**.', ephemeral=True)
+            logger.info(f'{interaction.user} unmuted {member}')
+            await self._post_mod_log(interaction.guild, 'Unmute', member, interaction.user, reason)
+        except discord.Forbidden:
+            await interaction.response.send_message('I do not have permission to remove that timeout.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Unmute error: {e}')
+            await interaction.response.send_message(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='purge', description='Delete messages from a channel, optionally from a specific user (Admin Only)')
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def purge(self, interaction: discord.Interaction, amount: int, member: discord.Member = None, channel: discord.TextChannel = None):
+        """Bulk-delete messages. If member is provided, only their messages are deleted.
+        Scans up to 500 messages to find the requested amount from that user."""
+        if amount < 1 or amount > 200:
+            await interaction.response.send_message('Amount must be between 1 and 200.', ephemeral=True)
+            return
+        target = channel or interaction.channel
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if member is None:
+                # No filter — standard purge
+                deleted = await target.purge(limit=amount)
+                await interaction.followup.send(f'Deleted {len(deleted)} message(s) in {target.mention}.', ephemeral=True)
+                logger.info(f'{interaction.user} purged {len(deleted)} messages in #{target.name}')
+            else:
+                # Scan up to 500 messages and collect the most recent `amount` from this member
+                scan_limit = max(amount * 10, 500)
+                to_delete = []
+                async for msg in target.history(limit=scan_limit):
+                    if msg.author == member:
+                        to_delete.append(msg)
+                    if len(to_delete) >= amount:
+                        break
+
+                if not to_delete:
+                    await interaction.followup.send(f'No messages from {member.mention} found in the last {scan_limit} messages.', ephemeral=True)
+                    return
+
+                # discord.py bulk delete requires messages < 14 days old; filter just in case
+                import datetime as dt
+                cutoff = discord.utils.utcnow() - dt.timedelta(days=14)
+                bulk = [m for m in to_delete if m.created_at > cutoff]
+                old_msgs = [m for m in to_delete if m.created_at <= cutoff]
+
+                if bulk:
+                    await target.delete_messages(bulk)
+                for msg in old_msgs:
+                    await msg.delete()
+                    await asyncio.sleep(0.5)  # rate-limit safe
+
+                total = len(bulk) + len(old_msgs)
+                suffix = f' ({len(old_msgs)} were older than 14 days and deleted individually.)' if old_msgs else ''
+                await interaction.followup.send(
+                    f'Deleted {total} message(s) from {member.mention} in {target.mention}.{suffix}',
+                    ephemeral=True
+                )
+                logger.info(f'{interaction.user} purged {total} messages from {member} in #{target.name}')
+        except discord.Forbidden:
+            await interaction.followup.send('I do not have permission to delete messages in that channel.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Purge error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='ban-list', description='Show this guild\'s ban list (Admin Only)')
+    @app_commands.checks.has_permissions(ban_members=True)
+    async def ban_list(self, interaction: discord.Interaction):
+        """Display the current guild's ban list in pages of 20."""
+        await interaction.response.defer(ephemeral=True)
+        try:
+            bans = [entry async for entry in interaction.guild.bans()]
+            if not bans:
+                await interaction.followup.send('No bans found in this server.', ephemeral=True)
+                return
+
+            page_size = 20
+            pages = [bans[i:i + page_size] for i in range(0, len(bans), page_size)]
+            embeds = []
+            for i, page in enumerate(pages):
+                embed = discord.Embed(
+                    title=f'Ban List — {interaction.guild.name}',
+                    description='\n'.join(f'`{e.user.id}` **{e.user}** — {e.reason or "No reason"}' for e in page),
+                    color=discord.Color.red()
+                )
+                embed.set_footer(text=f'Page {i+1}/{len(pages)} • {len(bans)} total ban(s)')
+                embeds.append(embed)
+
+            # Send first page; additional pages follow as separate messages
+            await interaction.followup.send(embed=embeds[0], ephemeral=True)
+            for embed in embeds[1:]:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send('I do not have permission to view the ban list.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'ban-list error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='ban-sync-list', description='List guilds linked for ban sync (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ban_sync_list(self, interaction: discord.Interaction):
+        """Show which guilds are currently linked for ban sync."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+
+        linked = config.get(guild_id, {}).get('sync_guilds', [])
+        if not linked:
+            await interaction.response.send_message('No guilds are linked for ban sync on this server.', ephemeral=True)
+            return
+
+        lines = []
+        for gid in linked:
+            g = self.bot.get_guild(int(gid))
+            name = g.name if g else '(bot not in this guild)'
+            lines.append(f'`{gid}` — {name}')
+
+        embed = discord.Embed(
+            title='Ban Sync Linked Guilds',
+            description='\n'.join(lines),
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text=f'{len(linked)} linked guild(s)')
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name='set-log-channel', description='Set the moderation log channel (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_log_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Store the mod-log channel for this guild."""
+        config = load_config()
+        guild_id = str(interaction.guild.id)
+        if guild_id not in config:
+            config[guild_id] = {}
+        config[guild_id]['log_channel'] = str(channel.id)
+        save_config(config)
+        await interaction.response.send_message(f'Mod log channel set to {channel.mention}.', ephemeral=True)
+        logger.info(f'Log channel set to #{channel.name} by {interaction.user}')
+
+    async def _post_mod_log(self, guild: discord.Guild, action: str, target: discord.User, moderator: discord.User, reason: str):
+        """Post a moderation action embed to the configured log channel."""
+        config = load_config()
+        guild_id = str(guild.id)
+        channel_id = config.get(guild_id, {}).get('log_channel')
+        if not channel_id:
+            return
+        channel = guild.get_channel(int(channel_id))
+        if not channel:
+            return
+        color_map = {
+            'Ban': discord.Color.dark_red(),
+            'Kick': discord.Color.orange(),
+            'Mute': discord.Color.gold(),
+            'Unmute': discord.Color.green(),
+        }
+        color = next((v for k, v in color_map.items() if action.startswith(k)), discord.Color.blurple())
+        embed = discord.Embed(title=f'Mod Action: {action}', color=color, timestamp=discord.utils.utcnow())
+        embed.add_field(name='User', value=f'{target.mention} (`{target.id}`)', inline=True)
+        embed.add_field(name='Moderator', value=moderator.mention, inline=True)
+        embed.add_field(name='Reason', value=reason, inline=False)
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            logger.error(f'Failed to post mod log: {e}')
+
+    # -------------------------------------------------------------------------
+    # Owner / Co-owner commands
+    # -------------------------------------------------------------------------
+
+    @app_commands.command(name='cpu-graph', description='Show a CPU usage snapshot over 5 seconds (Owner/Co-owner Only)')
+    async def cpu_graph(self, interaction: discord.Interaction):
+        """Sample CPU usage 5 times over 5 seconds and display a mini bar chart."""
+        if not await self._is_owner_or_coowner(interaction.user.id):
+            await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            samples = []
+            for _ in range(5):
+                samples.append(psutil.cpu_percent(interval=1))
+
+            bar_chars = 20
+            lines = []
+            for i, pct in enumerate(samples, 1):
+                filled = int(pct / 100 * bar_chars)
+                bar = '█' * filled + '░' * (bar_chars - filled)
+                lines.append(f't+{i}s  [{bar}] {pct:.1f}%')
+
+            avg = sum(samples) / len(samples)
+            lines.append(f'\nAvg: {avg:.1f}%  |  Cores: {psutil.cpu_count()}')
+
+            embed = discord.Embed(title='CPU Usage (5s sample)', description=f'```\n' + '\n'.join(lines) + '\n```', color=discord.Color.teal())
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.error(f'cpu-graph error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='update', description='Git pull and reboot the bot (Owner/Co-owner Only)')
+    async def update(self, interaction: discord.Interaction):
+        """Run git pull then restart the bot."""
+        if not await self._is_owner_or_coowner(interaction.user.id):
+            await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                'git pull',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            output = stdout.decode(errors='replace').strip() if stdout else '(no output)'
+            await interaction.followup.send(f'```\n{output[:1800]}\n```\nRebooting...', ephemeral=True)
+            logger.info(f'Update + reboot initiated by {interaction.user}: {output[:200]}')
+            await self.bot.close()
+        except asyncio.TimeoutError:
+            await interaction.followup.send('git pull timed out after 60 seconds.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Update error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
+
+    @app_commands.command(name='set-co-owner', description='Add or remove a co-owner by user ID (Owner Only)')
+    async def set_co_owner(self, interaction: discord.Interaction, user_id: str, action: str = 'add'):
+        """Dynamically add or remove co-owner IDs from the config. action: 'add' or 'remove'."""
+        # Only the primary owner (from env) may change co-owners
+        primary_id = os.getenv('BOT_OWNER_ID', '').strip()
+        if str(interaction.user.id) != primary_id:
+            await interaction.response.send_message('Only the primary bot owner can manage co-owners.', ephemeral=True)
+            return
+        action = action.lower()
+        if action not in ('add', 'remove'):
+            await interaction.response.send_message('Action must be `add` or `remove`.', ephemeral=True)
+            return
+        config = load_config()
+        co_owners = config.get('co_owners', [])
+        if action == 'add':
+            if user_id not in co_owners:
+                co_owners.append(user_id)
+                self._allowed_owner_ids.add(user_id)
+            msg = f'Added `{user_id}` as co-owner.'
+        else:
+            if user_id in co_owners:
+                co_owners.remove(user_id)
+                self._allowed_owner_ids.discard(user_id)
+            msg = f'Removed `{user_id}` from co-owners.'
+        config['co_owners'] = co_owners
+        save_config(config)
+        await interaction.response.send_message(msg, ephemeral=True)
+        logger.info(f'{action.capitalize()} co-owner {user_id} by {interaction.user}')
+
+    # -------------------------------------------------------------------------
+    # General / informational commands
+    # -------------------------------------------------------------------------
+
+    @app_commands.command(name='userinfo', description='Show info about a member')
+    async def userinfo(self, interaction: discord.Interaction, member: discord.Member = None):
+        """Display account info, join date, roles, and avatar for a member."""
+        member = member or interaction.user
+        roles = [r.mention for r in reversed(member.roles) if r != interaction.guild.default_role]
+        embed = discord.Embed(title=f'{member} — User Info', color=member.color)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name='ID', value=str(member.id), inline=True)
+        embed.add_field(name='Nickname', value=member.nick or 'None', inline=True)
+        embed.add_field(name='Bot?', value='Yes' if member.bot else 'No', inline=True)
+        embed.add_field(name='Account Created', value=discord.utils.format_dt(member.created_at, 'R'), inline=True)
+        embed.add_field(name='Joined Server', value=discord.utils.format_dt(member.joined_at, 'R'), inline=True)
+        embed.add_field(name=f'Roles ({len(roles)})', value=' '.join(roles[:10]) or 'None', inline=False)
+        if member.timed_out_until and member.timed_out_until > discord.utils.utcnow():
+            embed.add_field(name='Timed Out Until', value=discord.utils.format_dt(member.timed_out_until, 'R'), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name='serverinfo', description='Show info about this server')
+    async def serverinfo(self, interaction: discord.Interaction):
+        """Display guild stats: member count, creation date, boost level, owner."""
+        guild = interaction.guild
+        embed = discord.Embed(title=guild.name, color=discord.Color.blurple())
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+        embed.add_field(name='ID', value=str(guild.id), inline=True)
+        embed.add_field(name='Owner', value=guild.owner.mention if guild.owner else 'Unknown', inline=True)
+        embed.add_field(name='Created', value=discord.utils.format_dt(guild.created_at, 'R'), inline=True)
+        embed.add_field(name='Members', value=str(guild.member_count), inline=True)
+        embed.add_field(name='Channels', value=str(len(guild.channels)), inline=True)
+        embed.add_field(name='Roles', value=str(len(guild.roles)), inline=True)
+        embed.add_field(name='Boost Level', value=str(guild.premium_tier), inline=True)
+        embed.add_field(name='Boosts', value=str(guild.premium_subscription_count), inline=True)
+        embed.add_field(name='Verification Level', value=str(guild.verification_level).capitalize(), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+    @app_commands.command(name='announce', description='Send a formatted announcement embed (Admin Only)')
+    @app_commands.checks.has_permissions(administrator=True)
+    async def announce(self, interaction: discord.Interaction, title: str, message: str, channel: discord.TextChannel = None):
+        """Send a rich embed announcement to a channel."""
+        target = channel or interaction.channel
+        embed = discord.Embed(title=title, description=message, color=discord.Color.gold(), timestamp=discord.utils.utcnow())
+        embed.set_footer(text=f'Announced by {interaction.user.display_name}', icon_url=interaction.user.display_avatar.url)
+        try:
+            await target.send(embed=embed)
+            await interaction.response.send_message(f'Announcement sent to {target.mention}.', ephemeral=True)
+            logger.info(f'{interaction.user} announced in #{target.name}: {title}')
+        except discord.Forbidden:
+            await interaction.response.send_message('I do not have permission to send messages in that channel.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'Announce error: {e}')
+            await interaction.response.send_message(f'Error: {e}', ephemeral=True)
 
 
 async def setup(bot):
