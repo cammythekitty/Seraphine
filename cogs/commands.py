@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 import asyncio
 import psutil
+import datetime as dt
 
 logger = logging.getLogger(__name__)
 
@@ -460,7 +461,6 @@ class CommandsCog(commands.Cog):
             await interaction.response.send_message('Duration must be between 1 and 40320 minutes (28 days).', ephemeral=True)
             return
         try:
-            import datetime as dt
             until = discord.utils.utcnow() + dt.timedelta(minutes=minutes)
             await member.timeout(until, reason=f'{reason} (by {interaction.user})')
             await interaction.response.send_message(f'Muted **{member}** for {minutes} minute(s) — {reason}', ephemeral=True)
@@ -514,7 +514,6 @@ class CommandsCog(commands.Cog):
                     await interaction.followup.send(f'No messages from {member.mention} found.', ephemeral=True)
                     return
 
-                import datetime as dt
                 cutoff = discord.utils.utcnow() - dt.timedelta(days=14)
                 bulk = [m for m in to_delete if m.created_at > cutoff]
                 old_msgs = [m for m in to_delete if m.created_at <= cutoff]
@@ -818,5 +817,4 @@ class CommandsCog(commands.Cog):
 
 async def setup(bot):
     """Setup function to register the cog with the bot."""
-    await bot.add_cog(CommandsCog(bot))
     await bot.add_cog(CommandsCog(bot))
