@@ -266,6 +266,30 @@ class CommandsCog(commands.Cog):
             logger.error(f'Error during ban sync: {e}')
             await interaction.followup.send(f'Error during ban sync: {e}', ephemeral=True)
         
+
+    @app_commands.command(name='update-site', description='Git pull and reload the site (Owner/Co-owner Only)')
+    async def update_site(self, interaction: discord.Interaction):
+        """Pull latest changes from GitHub and reload nginx."""
+        if not await self._is_owner_or_coowner(interaction.user.id):
+            await interaction.response.send_message('Only the owner or co-owner can use this command.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                'git -C /usr/share/nginx/html pull && nginx -s reload',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+            output = stdout.decode(errors='replace').strip() if stdout else '(no output)'
+            await interaction.followup.send(f'```\n{output[:1800]}\n```', ephemeral=True)
+            logger.info(f'Site update triggered by {interaction.user}: {output[:200]}')
+        except asyncio.TimeoutError:
+            await interaction.followup.send('git pull timed out after 60 seconds.', ephemeral=True)
+        except Exception as e:
+            logger.error(f'update-site error: {e}')
+            await interaction.followup.send(f'Error: {e}', ephemeral=True)
+    
     @app_commands.command(name='sync', description='Force slash commands to update (Admin Only)')
     @app_commands.checks.has_permissions(administrator=True)
     async def sync(self, interaction: discord.Interaction):
