@@ -90,7 +90,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 async def load_cogs():
-    """Load all cogs from the cogs directory."""
+    """Load all cogs from the cogs directory using cross-platform paths."""
     cogs_dir = Path('cogs')
     
     if not cogs_dir.exists():
@@ -123,4 +123,4 @@ async def main():
 if __name__ == '__main__':
     import asyncio
     asyncio.run(main())
-
+    asyncio.run(main())
