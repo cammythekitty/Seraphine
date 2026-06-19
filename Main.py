@@ -42,6 +42,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True  # Required for reading message content
 intents.members = True
+intents.presences = True
 
 bot = commands.Bot(command_prefix="", intents=intents)
 bot.log_capture = log_capture  # Attach log capture handler to bot for cogs to access
