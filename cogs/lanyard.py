@@ -220,25 +220,26 @@ def build_presence(member: discord.Member) -> dict:
     }
 
 async def get_all_user_badges_and_profile(bot, member: discord.Member) -> dict:
-    # 1. Start with the public flags (HypeSquad, Active Dev, Early Supporter, etc.)
     badges = [flag.name for flag in member.public_flags.all()]
     
-    # 2. Check for Server Boosting badge (from the member object)
     if member.premium_since is not None:
         badges.append("premium_guild_subscriber")
 
-    # 3. Force-fetch the full API profile to get the Avatar Decoration and Nitro Status
     avatar_decoration_url = None
+    avatar_url = member.display_avatar.url
+    
     try:
-        # We fetch the user directly from Discord HTTP API
+        # Force fetch the user from Discord HTTP API to get premium profile metadata
         full_user = await bot.fetch_user(member.id)
         
-        # Pull the decoration URL if it exists
+        # Capture the avatar asset link from the heavy user object
+        if full_user.avatar:
+            avatar_url = full_user.avatar.url
+            
+        # Capture the decoration asset link from the heavy user object
         if full_user.avatar_decoration:
             avatar_decoration_url = full_user.avatar_decoration.url
             
-        # If they have a decoration, or banner, or certain flags, they definitely have Nitro
-        # Discord doesn't give bots a clean "has_nitro" boolean, so we use these indicators:
         has_nitro = (
             full_user.banner is not None or 
             full_user.avatar_decoration is not None or 
@@ -248,38 +249,34 @@ async def get_all_user_badges_and_profile(bot, member: discord.Member) -> dict:
             badges.append("nitro")
             
     except Exception as e:
-        # Fallback if the HTTP fetch fails or rate-limits
-        pass
+        logger.error(f"Error checking HTTP profile elements: {e}")
 
     return {
-        "badges": list(set(badges)), # Remove any duplicates
+        "avatar_url": avatar_url,
+        "badges": list(set(badges)),
         "avatar_decoration_url": avatar_decoration_url
     }
 
 def build_user(member: discord.Member):
-    # 1. Compile all standard profile badges (Hypesquad, Early Supporter, Active Dev, etc.)
-    # This loops through public flags and returns a clean list of strings like ["hypesquad_brilliance", "active_developer"]
     badges = [flag.name for flag in member.public_flags.all()]
     
-    # 2. Check for Nitro Boosting (premium_since returns a timestamp if they are actively boosting a server)
     is_boosting = member.premium_since is not None
     if is_boosting:
-        badges.append("premium_guild_subscriber")  # Adds the Server Booster badge
+        badges.append("premium_guild_subscriber")
 
-    # 3. Pull Avatar Decoration (Available on standard User/Member profiles if they are fully cached)
-    # This will return the dynamic link string or None if they don't have one
-    decoration_url = member.avatar_decoration.url if getattr(member, "avatar_decoration", None) else None
+    # Use getattr to safely check for avatar_decoration attributes
+    deco = getattr(member, "avatar_decoration", None)
+    decoration_url = deco.url if deco else None
 
     return {
         "id": str(member.id),
         "username": member.name,
         "discriminator": member.discriminator,
-        "avatar": member.avatar.url if member.avatar else None,
-        "avatar_decoration": decoration_url,  # <--- Exposes profile decorations
-        "badges": badges,  # <--- Exposes ALL standard profile badges
-        "nitro": is_boosting or (decoration_url is not None)  # Good heuristic for Nitro presence
+        "avatar": member.display_avatar.url, 
+        "avatar_decoration": decoration_url,
+        "badges": badges,
+        "nitro": is_boosting or (decoration_url is not None)
     }
-
 
 # ── Presence cache ─────────────────────────────────────────────────────────────
 
@@ -345,12 +342,10 @@ class LanyardAPI:
     async def _unified(self, req):
         uid = req.match_info["user_id"]
         entry = self.cache.get(uid)
-        
         if not entry:
             return self._error("not_monitored", "User is not cached (not in a shared guild or no presence seen yet).")
-            
-        # ── Step 2 Implementation ──────────────────────────────────────────────
-        # Try to find the member inside your bot's guilds to read their properties
+
+        # Look up the member across guilds to query their active profile properties
         member = None
         for guild in self.bot.guilds:
             member = guild.get_member(int(uid))
@@ -359,49 +354,52 @@ class LanyardAPI:
 
         if member:
             try:
-                # Force-fetch full details directly from Discord's HTTP API
-                # This grabs the live avatar decoration & missing Nitro flags
+                # Force-fetch the heavy HTTP profile data (decorations, Nitro flags)
                 rich_profile = await get_all_user_badges_and_profile(self.bot, member)
                 
-                # Dynamically update the cached dictionary so it's fresh
+                # OVERWRITE/MERGE the data with the fresh API URLs!
+                entry["user"]["avatar"] = rich_profile["avatar_url"]
                 entry["user"]["badges"] = rich_profile["badges"]
                 entry["user"]["avatar_decoration"] = rich_profile["avatar_decoration_url"]
                 entry["user"]["nitro"] = "nitro" in rich_profile["badges"]
             except Exception as e:
-                logger.error(f"Failed to fetch heavy profile details for {uid}: {e}")
+                logger.error(f"Failed to append heavy profile flags for {uid}: {e}")
 
         return self._json({**entry, "updated_at": entry["presence"]["updated_at"]})
-
-    async def _presence_only(self, req):
-        uid = req.match_info["user_id"]
-        entry = self.cache.get(uid)
-        if not entry:
-            return self._error("not_monitored", "User not found in presence cache.")
-        return self._json(entry["presence"])
 
     async def _profile_only(self, req):
         uid = req.match_info["user_id"]
         entry = self.cache.get(uid)
         if not entry:
             return self._error("not_found", "User not found in cache.")
-            
-        # Mirror the same injection pattern here
+
+        # Look up the member across guilds
         member = None
         for guild in self.bot.guilds:
             member = guild.get_member(int(uid))
             if member:
                 break
-                
+
         if member:
             try:
+                # Force-fetch the heavy HTTP profile data
                 rich_profile = await get_all_user_badges_and_profile(self.bot, member)
+                
+                # OVERWRITE/MERGE the data with the fresh API URLs!
+                entry["user"]["avatar"] = rich_profile["avatar_url"]
                 entry["user"]["badges"] = rich_profile["badges"]
                 entry["user"]["avatar_decoration"] = rich_profile["avatar_decoration_url"]
                 entry["user"]["nitro"] = "nitro" in rich_profile["badges"]
             except Exception:
                 pass
-                
+
         return self._json(entry["user"])
+    async def _presence_only(self, req):
+        uid = req.match_info["user_id"]
+        entry = self.cache.get(uid)
+        if not entry:
+            return self._error("not_monitored", "User not found in presence cache.")
+        return self._json(entry["presence"])
 
     async def start(self, host: str, port: int):
         self.runner = web.AppRunner(self.app)
