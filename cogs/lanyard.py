@@ -436,7 +436,7 @@ class LanyardCog(commands.Cog, name="Lanyard"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.cache = PresenceCache()
-		self.api = LanyardAPI(self.bot, self.cache)
+        self.api = LanyardAPI(self.bot, self.cache)
         self._host = os.getenv("LANYARD_HOST", "127.0.0.1")
         self._port = int(os.getenv("LANYARD_PORT", "5000"))
         self._api_task: asyncio.Task | None = None
