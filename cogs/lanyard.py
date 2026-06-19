@@ -225,18 +225,20 @@ async def get_all_user_badges_and_profile(bot, member: discord.Member) -> dict:
     if member.premium_since is not None:
         badges.append("premium_guild_subscriber")
 
+    # Default fallback to member's standard cached avatar layout
+    # Using your file's custom avatar_url formatter helper function
+    avatar_hash = member.avatar.key if member.avatar else None
+    final_avatar_url = avatar_url(str(member.id), avatar_hash)
     avatar_decoration_url = None
-    avatar_url = member.display_avatar.url
     
     try:
-        # Force fetch the user from Discord HTTP API to get premium profile metadata
         full_user = await bot.fetch_user(member.id)
         
-        # Capture the avatar asset link from the heavy user object
+        # Pull correct image string if user has an updated global avatar asset
         if full_user.avatar:
-            avatar_url = full_user.avatar.url
+            final_avatar_url = avatar_url(str(member.id), full_user.avatar.key)
             
-        # Capture the decoration asset link from the heavy user object
+        # Extract the exact string URL path for the decoration asset
         if full_user.avatar_decoration:
             avatar_decoration_url = full_user.avatar_decoration.url
             
@@ -252,7 +254,7 @@ async def get_all_user_badges_and_profile(bot, member: discord.Member) -> dict:
         logger.error(f"Error checking HTTP profile elements: {e}")
 
     return {
-        "avatar_url": avatar_url,
+        "avatar_url": final_avatar_url,
         "badges": list(set(badges)),
         "avatar_decoration_url": avatar_decoration_url
     }
@@ -391,6 +393,7 @@ class LanyardAPI:
                 entry["user"]["avatar_decoration"] = rich_profile["avatar_decoration_url"]
                 entry["user"]["nitro"] = "nitro" in rich_profile["badges"]
             except Exception:
+                logger.error(f"Endpoint merge crash: {e}")
                 pass
 
         return self._json(entry["user"])
