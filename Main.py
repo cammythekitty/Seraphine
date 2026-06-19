@@ -56,13 +56,15 @@ async def before_invoke(ctx):
 # Events
 @bot.event
 async def on_ready():
-    """Called when the bot is ready."""
     logger.info(f'{bot.user} has connected to Discord!')
     logger.info(f'Bot ID: {bot.user.id}')
     try:
         guild_id = os.getenv('DISCORD_GUILD_ID')
         if guild_id:
             guild = discord.Object(id=int(guild_id))
+            
+            bot.tree.copy_global_to(guild=guild) 
+            
             synced = await bot.tree.sync(guild=guild)
             logger.info(f'Synced {len(synced)} command(s) to guild {guild_id}')
         else:
