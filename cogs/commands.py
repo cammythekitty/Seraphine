@@ -10,6 +10,7 @@ from datetime import datetime
 import asyncio
 import psutil
 import datetime as dt
+import websockets
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class CommandsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._allowed_owner_ids = self._load_env_owner_ids()
+        self.ai_enabled = False
+        self.SERAPHBYTE_WS = 'ws://127.0.0.1:8543'
+        self.CONTEXT_LIMIT = 10  # messages of context to pass
 
     def _load_env_owner_ids(self):
         owner_ids = set()
@@ -813,6 +817,93 @@ class CommandsCog(commands.Cog):
         embed.set_footer(text=f'Shard ID: {guild.shard_id or "N/A"}')
         
         await interaction.response.send_message(embed=embed)
+
+
+    # ── AI ──────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name='ai', description='Toggle Seraph AI responses on/off (Owner Only)')
+    async def ai_toggle(self, interaction: discord.Interaction):
+        if not await self._is_owner_or_coowner(interaction.user.id):
+            await interaction.response.send_message('Only the owner can toggle the AI.', ephemeral=True)
+            return
+        self.ai_enabled = not self.ai_enabled
+        state = 'enabled 🟢' if self.ai_enabled else 'disabled 🔴'
+        await interaction.response.send_message(f'Seraph AI is now **{state}**', ephemeral=True)
+        logger.info(f'AI toggled {state} by {interaction.user}')
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # ignore bots and DMs
+        if message.author.bot or not message.guild:
+            return
+        if not self.ai_enabled:
+            return
+
+        is_mention = self.bot.user in message.mentions
+        is_reply = (
+            message.reference is not None
+            and message.reference.resolved is not None
+            and isinstance(message.reference.resolved, discord.Message)
+            and message.reference.resolved.author == self.bot.user
+        )
+
+        if not (is_mention or is_reply):
+            return
+
+        # strip the bot mention from the message
+        prompt = message.content.replace(f'<@{self.bot.user.id}>', '').replace(f'<@!{self.bot.user.id}>', '').strip()
+        if not prompt:
+            prompt = '(no message)'
+
+        # grab context from channel history
+        context_lines = []
+        try:
+            async for msg in message.channel.history(limit=self.CONTEXT_LIMIT + 1, before=message):
+                who = 'Seraphine' if msg.author == self.bot.user else msg.author.display_name
+                context_lines.insert(0, f'{who}: {msg.content}')
+        except Exception:
+            pass
+
+        context_str = '\n'.join(context_lines)
+        full_prompt = f'{context_str}\n{message.author.display_name}: {prompt}'.strip() if context_str else f'{message.author.display_name}: {prompt}'
+
+        async with message.channel.typing():
+            try:
+                response_tokens = []
+                async with websockets.connect(self.SERAPHBYTE_WS, open_timeout=5) as ws:
+                    import json as _json
+                    frame = _json.dumps({
+                        'prompt': full_prompt,
+                        'temperature': 0.7,
+                        'top_p': 0.9,
+                        'max_tokens': 1024,
+                    })
+                    await ws.send(frame)
+                    async for token in ws:
+                        try:
+                            parsed = _json.loads(token)
+                            if isinstance(parsed, dict):
+                                continue  # skip model_info frames etc.
+                        except Exception:
+                            pass
+                        response_tokens.append(token)
+
+                response = ''.join(response_tokens).strip()
+                if not response:
+                    response = '*(no response)*'
+
+                # Discord has a 2000 char limit
+                if len(response) > 1990:
+                    response = response[:1990] + '…'
+
+                await message.reply(response)
+
+            except (OSError, websockets.exceptions.WebSocketException) as e:
+                logger.error(f'SeraphByte WS error: {e}')
+                await message.reply('⚠️ Seraph is offline — is SeraphByte running?')
+            except Exception as e:
+                logger.error(f'AI on_message error: {e}')
+                await message.reply(f'⚠️ Something went wrong: {e}')
 
 
 async def setup(bot):
