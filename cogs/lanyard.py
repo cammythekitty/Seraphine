@@ -219,66 +219,24 @@ def build_presence(member: discord.Member) -> dict:
         "updated_at": int(datetime.now(timezone.utc).timestamp() * 1000),
     }
 
-async def get_all_user_badges_and_profile(bot, member: discord.Member) -> dict:
-    badges = [flag.name for flag in member.public_flags.all()]
-    
-    if member.premium_since is not None:
-        badges.append("premium_guild_subscriber")
 
-    # Default fallback to member's standard cached avatar layout
-    # Using your file's custom avatar_url formatter helper function
-    avatar_hash = member.avatar.key if member.avatar else None
-    final_avatar_url = avatar_url(str(member.id), avatar_hash)
-    avatar_decoration_url = None
-    
-    try:
-        full_user = await bot.fetch_user(member.id)
-        
-        # Pull correct image string if user has an updated global avatar asset
-        if full_user.avatar:
-            final_avatar_url = avatar_url(str(member.id), full_user.avatar.key)
-            
-        # Extract the exact string URL path for the decoration asset
-        if full_user.avatar_decoration:
-            avatar_decoration_url = full_user.avatar_decoration.url
-            
-        has_nitro = (
-            full_user.banner is not None or 
-            full_user.avatar_decoration is not None or 
-            member.premium_since is not None
-        )
-        if has_nitro:
-            badges.append("nitro")
-            
-    except Exception as e:
-        logger.error(f"Error checking HTTP profile elements: {e}")
-
+def build_user(user: discord.User | discord.Member) -> dict:
+    uid = str(user.id)
+    av = user.avatar.key if user.avatar else None
+    banner_hash = user.banner.key if hasattr(user, "banner") and user.banner else None
     return {
-        "avatar_url": final_avatar_url,
-        "badges": list(set(badges)),
-        "avatar_decoration_url": avatar_decoration_url
+        "id": uid,
+        "username": user.name,
+        "global_name": user.global_name,
+        "display_name": user.display_name,
+        "avatar": av,
+        "avatar_url": avatar_url(uid, av),
+        "banner": banner_hash,
+        "banner_url": banner_url(uid, banner_hash),
+        "accent_color": user.accent_color.value if hasattr(user, "accent_color") and user.accent_color else None,
+        "bot": user.bot,
     }
 
-def build_user(member: discord.Member):
-    badges = [flag.name for flag in member.public_flags.all()]
-    
-    is_boosting = member.premium_since is not None
-    if is_boosting:
-        badges.append("premium_guild_subscriber")
-
-    # Use getattr to safely check for avatar_decoration attributes
-    deco = getattr(member, "avatar_decoration", None)
-    decoration_url = deco.url if deco else None
-
-    return {
-        "id": str(member.id),
-        "username": member.name,
-        "discriminator": member.discriminator,
-        "avatar": member.display_avatar.url, 
-        "avatar_decoration": decoration_url,
-        "badges": badges,
-        "nitro": is_boosting or (decoration_url is not None)
-    }
 
 # ── Presence cache ─────────────────────────────────────────────────────────────
 
@@ -307,15 +265,13 @@ class PresenceCache:
 # ── HTTP API ───────────────────────────────────────────────────────────────────
 
 class LanyardAPI:
-    def __init__(self, bot: commands.Bot, cache: PresenceCache):
-        self.bot = bot
+    def __init__(self, cache: PresenceCache):
         self.cache = cache
         self.app = web.Application()
         self.app.router.add_get("/", self._root)
         self.app.router.add_get("/v1/users/{user_id}", self._unified)
         self.app.router.add_get("/v1/users/{user_id}/presence", self._presence_only)
         self.app.router.add_get("/v1/users/{user_id}/profile", self._profile_only)
-        self.app.router.add_get("/{user_id}", self._unified)
         self.runner: web.AppRunner | None = None
 
     def _json(self, data, status=200):
@@ -346,63 +302,21 @@ class LanyardAPI:
         entry = self.cache.get(uid)
         if not entry:
             return self._error("not_monitored", "User is not cached (not in a shared guild or no presence seen yet).")
-
-        # Look up the member across guilds to query their active profile properties
-        member = None
-        for guild in self.bot.guilds:
-            member = guild.get_member(int(uid))
-            if member:
-                break
-
-        if member:
-            try:
-                # Force-fetch the heavy HTTP profile data (decorations, Nitro flags)
-                rich_profile = await get_all_user_badges_and_profile(self.bot, member)
-                
-                # OVERWRITE/MERGE the data with the fresh API URLs!
-                entry["user"]["avatar"] = rich_profile["avatar_url"]
-                entry["user"]["badges"] = rich_profile["badges"]
-                entry["user"]["avatar_decoration"] = rich_profile["avatar_decoration_url"]
-                entry["user"]["nitro"] = "nitro" in rich_profile["badges"]
-            except Exception as e:
-                logger.error(f"Failed to append heavy profile flags for {uid}: {e}")
-
         return self._json({**entry, "updated_at": entry["presence"]["updated_at"]})
 
-    async def _profile_only(self, req):
-        uid = req.match_info["user_id"]
-        entry = self.cache.get(uid)
-        if not entry:
-            return self._error("not_found", "User not found in cache.")
-
-        # Look up the member across guilds
-        member = None
-        for guild in self.bot.guilds:
-            member = guild.get_member(int(uid))
-            if member:
-                break
-
-        if member:
-            try:
-                # Force-fetch the heavy HTTP profile data
-                rich_profile = await get_all_user_badges_and_profile(self.bot, member)
-                
-                # OVERWRITE/MERGE the data with the fresh API URLs!
-                entry["user"]["avatar"] = rich_profile["avatar_url"]
-                entry["user"]["badges"] = rich_profile["badges"]
-                entry["user"]["avatar_decoration"] = rich_profile["avatar_decoration_url"]
-                entry["user"]["nitro"] = "nitro" in rich_profile["badges"]
-            except Exception:
-                logger.error(f"Endpoint merge crash: {e}")
-                pass
-
-        return self._json(entry["user"])
     async def _presence_only(self, req):
         uid = req.match_info["user_id"]
         entry = self.cache.get(uid)
         if not entry:
             return self._error("not_monitored", "User not found in presence cache.")
         return self._json(entry["presence"])
+
+    async def _profile_only(self, req):
+        uid = req.match_info["user_id"]
+        entry = self.cache.get(uid)
+        if not entry:
+            return self._error("not_found", "User not found in cache.")
+        return self._json(entry["user"])
 
     async def start(self, host: str, port: int):
         self.runner = web.AppRunner(self.app)
@@ -437,7 +351,7 @@ class LanyardCog(commands.Cog, name="Lanyard"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.cache = PresenceCache()
-        self.api = LanyardAPI(self.bot, self.cache)
+        self.api = LanyardAPI(self.cache)
         self._host = os.getenv("LANYARD_HOST", "127.0.0.1")
         self._port = int(os.getenv("LANYARD_PORT", "5000"))
         self._api_task: asyncio.Task | None = None
@@ -459,18 +373,15 @@ class LanyardCog(commands.Cog, name="Lanyard"):
     # ── Gateway events ─────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
-    async def on_guild_available(self, guild: discord.Guild):
-        """Seeds the cache dynamically as each server becomes available to the bot."""
+    async def on_ready(self):
+        """Seed the cache from all visible members on startup."""
         count = 0
-        for member in guild.members:
-            if not member.bot:
-                # Remove the ", None" from build_user()
-                self.cache._store[str(member.id)] = {
-                    "presence": build_presence(member),
-                    "user": build_user(member), 
-                }
-                count += 1
-        logger.info(f"Lanyard: seeded {count} members from guild: {guild.name}")
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if not member.bot:
+                    self.cache.update(member)
+                    count += 1
+        logger.info(f"Lanyard: seeded {count} member presences from {len(self.bot.guilds)} guild(s)")
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
