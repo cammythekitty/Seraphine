@@ -308,7 +308,8 @@ class PresenceCache:
 # ── HTTP API ───────────────────────────────────────────────────────────────────
 
 class LanyardAPI:
-    def __init__(self, cache: PresenceCache):
+    def __init__(self, bot: commands.Bot, cache: PresenceCache):
+        self.bot = bot
         self.cache = cache
         self.app = web.Application()
         self.app.router.add_get("/", self._root)
