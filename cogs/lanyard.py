@@ -374,21 +374,18 @@ class LanyardCog(commands.Cog, name="Lanyard"):
     # ── Gateway events ─────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
-    async def cog_load(self):
-        """Seed the cache from all visible members as soon as the cog loads."""
+    async def on_guild_available(self, guild: discord.Guild):
+        """Seeds the cache dynamically as each server becomes available to the bot."""
         count = 0
-        seen = set()
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if not member.bot and str(member.id) not in seen:
-                    seen.add(str(member.id))
-                    # seed presence + user WITHOUT rich fetch
-                    self.cache._store[str(member.id)] = {
-                        "presence": build_presence(member),
-                        "user": build_user(member, None),
-                    }
-                    count += 1
-        logger.info(f"Lanyard: seeded {count} members; rich profiles will load on next presence update")
+        for member in guild.members:
+            if not member.bot:
+                # seed presence + user WITHOUT rich fetch
+                self.cache._store[str(member.id)] = {
+                    "presence": build_presence(member),
+                    "user": build_user(member, None),
+                }
+                count += 1
+        logger.info(f"Lanyard: seeded {count} members from guild: {guild.name}")
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
