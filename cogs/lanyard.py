@@ -373,16 +373,27 @@ class LanyardCog(commands.Cog, name="Lanyard"):
 
     # ── Gateway events ─────────────────────────────────────────────────────────
 
-    @commands.Cog.listener()
+@commands.Cog.listener()
     async def on_ready(self):
-        """Seed the cache from all visible members on startup."""
+        """Seed the cache from all visible members on startup.
+        Rich profile fetches are deferred to avoid hammering Discord on boot.
+        """
         count = 0
+        seen = set()
+        
         for guild in self.bot.guilds:
             for member in guild.members:
-                if not member.bot:
-                    self.cache.update(member)
+                if not member.bot and str(member.id) not in seen:
+                    seen.add(str(member.id))
+                    
+                    # seed presence + user WITHOUT rich fetch
+                    self.cache._store[str(member.id)] = {
+                        "presence": build_presence(member),
+                        "user": build_user(member, None),
+                    }
                     count += 1
-        logger.info(f"Lanyard: seeded {count} member presences from {len(self.bot.guilds)} guild(s)")
+                    
+        logger.info(f"Lanyard: seeded {count} members; rich profiles will load on next presence update")
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
@@ -394,36 +405,6 @@ class LanyardCog(commands.Cog, name="Lanyard"):
         if not after.bot:
             self.cache.update(after)
 
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Seed the cache from all visible members on startup."""
-        count = 0
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if not member.bot:
-                    await self.cache.update(member)
-                    count += 1
-        logger.info(f"Lanyard: seeded {count} member presences from {len(self.bot.guilds)} guild(s)"),
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """Seed the cache from all visible members on startup.
-        Rich profile fetches are deferred to avoid hammering Discord on boot.
-        They'll populate naturally as members trigger presence/member updates.
-        """
-        count = 0
-        seen = set()
-        for guild in self.bot.guilds:
-            for member in guild.members:
-                if not member.bot and str(member.id) not in seen:
-                    seen.add(str(member.id))
-                    # seed presence + user WITHOUT rich fetch (no token call on boot)
-                    self.cache._store[str(member.id)] = {
-                        "presence": build_presence(member),
-                        "user": build_user(member, None),
-                    }
-                    count += 1
-        logger.info(f"Lanyard: seeded {count} members; rich profiles will load on next presence update")
     # ── Slash commands ─────────────────────────────────────────────────────────
 
     @app_commands.command(name="presence", description="Show a user's current Discord presence")
