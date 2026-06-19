@@ -272,6 +272,7 @@ class LanyardAPI:
         self.app.router.add_get("/v1/users/{user_id}", self._unified)
         self.app.router.add_get("/v1/users/{user_id}/presence", self._presence_only)
         self.app.router.add_get("/v1/users/{user_id}/profile", self._profile_only)
+        self.app.router.add_get("/{user_id}", self._unified)
         self.runner: web.AppRunner | None = None
 
     def _json(self, data, status=200):
