@@ -379,10 +379,10 @@ class LanyardCog(commands.Cog, name="Lanyard"):
         count = 0
         for member in guild.members:
             if not member.bot:
-                # seed presence + user WITHOUT rich fetch
+                # Remove the ", None" from build_user()
                 self.cache._store[str(member.id)] = {
                     "presence": build_presence(member),
-                    "user": build_user(member, None),
+                    "user": build_user(member), 
                 }
                 count += 1
         logger.info(f"Lanyard: seeded {count} members from guild: {guild.name}")
