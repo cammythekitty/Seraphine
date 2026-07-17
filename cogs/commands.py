@@ -818,19 +818,6 @@ class CommandsCog(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
 
-
-    # ── AI ──────────────────────────────────────────────────────────────────
-
-    @app_commands.command(name='ai', description='Toggle Seraph AI responses on/off (Owner Only)')
-    async def ai_toggle(self, interaction: discord.Interaction):
-        if not await self._is_owner_or_coowner(interaction.user.id):
-            await interaction.response.send_message('Only the owner can toggle the AI.', ephemeral=True)
-            return
-        self.ai_enabled = not self.ai_enabled
-        state = 'enabled 🟢' if self.ai_enabled else 'disabled 🔴'
-        await interaction.response.send_message(f'Seraph AI is now **{state}**', ephemeral=True)
-        logger.info(f'AI toggled {state} by {interaction.user}')
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         # ignore bots and DMs
